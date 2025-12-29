@@ -100,7 +100,7 @@ def run_sync():
                     if "size_space" in obj_name and cb.currentIndex() != target_s:
                         cb.setCurrentIndex(target_s)
                         cb.activated.emit(target_s)
-                        sp_logging.info(f"[助手] {view_type}同步成功: 间距 -> {ALIGN_ITEMS[target_s]}")
+                        sp_logging.info(f"[助手] {view_type}同步成功: 间距大小 -> {ALIGN_ITEMS[target_s]}")
         except Exception: pass
 
 # ==========================================
@@ -136,7 +136,7 @@ class AlignControl(QtWidgets.QDialog):
             ca = QtWidgets.QComboBox(); ca.addItems(ALIGN_ITEMS)
             ca.setCurrentIndex(self.cfg[a_key]); ca.activated.connect(lambda i: self.cfg.update({a_key: i}))
             gl.addWidget(ca, 0, 1)
-            gl.addWidget(QtWidgets.QLabel("间距"), 1, 0)
+            gl.addWidget(QtWidgets.QLabel("间距大小"), 1, 0)
             cs = QtWidgets.QComboBox(); cs.addItems(SPACE_ITEMS)
             cs.setCurrentIndex(self.cfg[s_key]); cs.activated.connect(lambda i: self.cfg.update({s_key: i}))
             gl.addWidget(cs, 1, 1)
