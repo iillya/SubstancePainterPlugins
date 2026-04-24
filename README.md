@@ -6,6 +6,6 @@
 
 效果演示：<br>
 
-  ![SnowShot_Video_2025-12-25_17-10-56](https://github.com/user-attachments/assets/b5292100-6785-4185-a6fd-5fe95b629951)
+![SnowShot_Video_2025-12-29_17-36-40](https://github.com/user-attachments/assets/662494bb-6418-4d68-bd37-29356a625a74)
 
 使用局限：必须保持属性面板打开，隐藏到其他面板后也不要紧，但叉掉后不起作用。请使用最新SP版本（11.1.0），低版本可能不支持<br>
