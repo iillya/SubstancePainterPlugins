@@ -1,0 +1,379 @@
+[Resources List Model] 预留图标内存设置为 100MB。
+[插件 - resources-updater] 无项目打开，资源更新程序已放弃
+[Python] ==================================================
+[Python] 开始全量 API 嗅探 (Substance 3D Painter 11.1.0)
+[Python] ==================================================
+[Python] 
+[模块探测: substance_painter.project]
+[Python]   函数 (19):
+[Python]   - close() -> None
+[Python]   - create(mesh_file_path: str, mesh_map_file_paths: List[str] = None, template_file_path: str = None, settings: substance_painter.project.Settings = Settings(default_save_path=None, normal_map_format=None, tangent_space_mode=None, project_workflow=None, export_path=None, default_texture_resolution=None, import_cameras=None, mesh_unit_scale=None, mesh_settings=None))
+[Python]   - execute_when_not_busy(callback: Callable[[], NoneType]) -> None
+[Python]   - file_path() -> Optional[str]
+[Python]   - get_scene_bounding_box() -> substance_painter.project.BoundingBox
+[Python]   - get_uuid() -> uuid.UUID
+[Python]   - is_busy() -> bool
+[Python]   - is_in_edition_state() -> bool
+[Python]   - is_open() -> bool
+[Python]   - last_imported_mesh_path() -> str
+[Python]   - last_saved_substance_painter_version() -> Optional[Tuple[int, int, int]]
+[Python]   - name() -> Optional[str]
+[Python]   - needs_saving() -> bool
+[Python]   - open(project_file_path: str) -> None
+[Python]   - reload_mesh(mesh_file_path: str, settings: substance_painter.project.MeshReloadingSettings, loading_status_cb: Callable[[substance_painter.project.ReloadMeshStatus], Any])
+[Python]   - save(mode: _substance_painter.project.ProjectSaveMode = <ProjectSaveMode.Incremental: 0>) -> None
+[Python]   - save_as(project_file_path: str, mode: _substance_painter.project.ProjectSaveMode = <ProjectSaveMode.Incremental: 0>) -> None
+[Python]   - save_as_copy(backup_file_path: str, mode: _substance_painter.project.ProjectSaveMode = <ProjectSaveMode.Incremental: 0>) -> None
+[Python]   - save_as_template(template_file_path: str, texture_set_name: str) -> _substance_painter.project.ProjectSaveMode
+[Python]   类 (19):
+[Python]   * [类] Any (方法数: 1)
+[Python]       示例方法: ['__new__']
+[Python]   * [类] BoundingBox (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] GltfSettings (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] MeshReloadingSettings (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] Metadata (方法数: 4)
+[Python]       示例方法: ['__init__', 'get', 'list', 'set']
+[Python]   * [类] NormalMapFormat (方法数: 0)
+[Python]   * [类] ProjectSaveMode (方法数: 0)
+[Python]   * [类] ProjectWorkflow (方法数: 0)
+[Python]   * [类] ReloadMeshStatus (方法数: 0)
+[Python]   * [类] Settings (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] TangentSpace (方法数: 0)
+[Python]   * [类] UsdSettings (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   其他/常量 (11):
+[Python] 
+[模块探测: substance_painter.textureset]
+[Python]   函数 (4):
+[Python]   - all_texture_sets() -> List[substance_painter.textureset.TextureSet]
+[Python]   - get_active_stack() -> substance_painter.textureset.Stack
+[Python]   - set_active_stack(stack: substance_painter.textureset.Stack) -> None
+[Python]   - set_resolutions(texturesets: List[substance_painter.textureset.TextureSet], new_resolution: substance_painter.textureset.Resolution)
+[Python]   类 (13):
+[Python]   * [类] Channel (方法数: 13)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ChannelFormat (方法数: 0)
+[Python]   * [类] ChannelType (方法数: 0)
+[Python]   * [类] MeshMapUsage (方法数: 0)
+[Python]   * [类] Resolution (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] Stack (方法数: 16)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] TextureSet (方法数: 22)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] UVTile (方法数: 11)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   其他/常量 (3):
+[Python] 
+[模块探测: substance_painter.layerstack]
+[Python]   函数 (22):
+[Python]   - create_smart_mask(layer: 'LayerNode', name: 'str') -> 'substance_painter.resource.Resource'
+[Python]   - create_smart_material(group: 'GroupLayerNode', name: 'str') -> 'substance_painter.resource.Resource'
+[Python]   - delete_node(node: 'Node')
+[Python]   - get_node_by_uid(node_id: 'int') -> 'List[Union[HierarchicalNode, EffectNode]]'
+[Python]   - get_root_layer_nodes(stack: 'Stack') -> 'List[HierarchicalNode]'
+[Python]   - get_selected_nodes(stack: 'Stack') -> 'List[Union[HierarchicalNode, EffectNode]]'
+[Python]   - get_selection_type(layer: 'LayerNode') -> 'SelectionType'
+[Python]   - insert_anchor_point_effect(position: 'InsertPosition', name: 'str') -> 'AnchorPointEffectNode'
+[Python]   - insert_color_selection_effect(position: 'InsertPosition') -> 'ColorSelectionEffectNode'
+[Python]   - insert_compare_mask_effect(position: 'InsertPosition') -> 'CompareMaskEffectNode'
+[Python]   - insert_fill(position: 'InsertPosition') -> 'Union[FillLayerNode, FillEffectNode]'
+[Python]   - insert_filter_effect(position: 'InsertPosition', filter_substance: 'Optional[substance_painter.resource.ResourceID]' = None) -> 'FilterEffectNode'
+[Python]   - insert_generator_effect(position: 'InsertPosition', generator_substance: 'Optional[substance_painter.resource.ResourceID]' = None) -> 'GeneratorEffectNode'
+[Python]   - insert_group(position: 'InsertPosition') -> 'GroupLayerNode'
+[Python]   - insert_levels_effect(position: 'InsertPosition') -> 'LevelsEffectNode'
+[Python]   - insert_paint(position: 'InsertPosition') -> 'Union[PaintLayerNode, PaintEffectNode]'
+[Python]   - insert_smart_mask(position: 'InsertPosition', smart_mask: 'substance_painter.resource.ResourceID') -> 'List[EffectNode]'
+[Python]   - insert_smart_material(position: 'InsertPosition', smart_material: 'substance_painter.resource.ResourceID') -> 'GroupLayerNode'
+[Python]   - instantiate(position: 'InsertPosition', layer: 'LayerNode') -> 'InstanceLayerNode'
+[Python]   - is_3d_projection_mode(projection_mode: 'ProjectionMode') -> 'bool'
+[Python]   - set_selected_nodes(nodes: 'List[EffectNode] | List[LayerNode]')
+[Python]   - set_selection_type(layer: 'LayerNode', layer_selection_type: 'SelectionType')
+[Python]   类 (96):
+[Python]   * [类] ActiveChannelsMixin (方法数: 0)
+[Python]   * [类] AnchorPointEffectNode (方法数: 22)
+[Python]       示例方法: ['__eq__', '__hash__', '__init__', '__repr__', '__setattr__']
+[Python]   * [类] BlendingMode (方法数: 0)
+[Python]   * [类] ChannelType (方法数: 0)
+[Python]   * [类] Color (方法数: 4)
+[Python]       示例方法: ['_Color__convert', '_Color__expect_convert', '__init__', 'convert']
+[Python]   * [类] ColorSelectionBackgroundColor (方法数: 0)
+[Python]   * [类] ColorSelectionEffectNode (方法数: 24)
+[Python]       示例方法: ['__eq__', '__hash__', '__init__', '__repr__', '__setattr__']
+[Python]   * [类] ColorSelectionEffectParams (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] CompareMaskEffectNode (方法数: 24)
+[Python]       示例方法: ['__eq__', '__hash__', '__init__', '__repr__', '__setattr__']
+[Python]   * [类] CompareMaskEffectOperand (方法数: 0)
+[Python]   * [类] CompareMaskEffectOperation (方法数: 0)
+[Python]   * [类] CompareMaskEffectParams (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] CylindricalProjectionParams (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] Enum (方法数: 1)
+[Python]       示例方法: ['__new__']
+[Python]   * [类] FillEffectNode (方法数: 37)
+[Python]       示例方法: ['__eq__', '__hash__', '__init__', '__repr__', '__setattr__']
+[Python]   * [类] FillLayerNode (方法数: 53)
+[Python]       示例方法: ['__eq__', '__hash__', '__init__', '__repr__', '__setattr__']
+[Python]   * [类] FillParamsEditorMixin (方法数: 8)
+[Python]       示例方法: ['get_projection_mode', 'get_projection_parameters', 'get_symmetry_parameters', 'is_symmetry_enabled', 'set_projection_mode']
+[Python]   * [类] FilterEffectNode (方法数: 25)
+[Python]       示例方法: ['__eq__', '__hash__', '__init__', '__repr__', '__setattr__']
+[Python]   * [类] FilteringMode (方法数: 0)
+[Python]   * [类] GeneratorEffectNode (方法数: 25)
+[Python]       示例方法: ['__eq__', '__hash__', '__init__', '__repr__', '__setattr__']
+[Python]   * [类] GeometryMaskType (方法数: 0)
+[Python]   * [类] GroupLayerNode (方法数: 41)
+[Python]       示例方法: ['__eq__', '__hash__', '__init__', '__repr__', '__setattr__']
+[Python]   * [类] InsertPosition (方法数: 10)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] InstanceLayerNode (方法数: 39)
+[Python]       示例方法: ['__eq__', '__hash__', '__init__', '__repr__', '__setattr__']
+[Python]   * [类] LayerNode (方法数: 38)
+[Python]       示例方法: ['__eq__', '__hash__', '__init__', '__repr__', '__setattr__']
+[Python]   * [类] LevelsEffectNode (方法数: 24)
+[Python]       示例方法: ['__eq__', '__hash__', '__init__', '__repr__', '__setattr__']
+[Python]   * [类] MaskBackground (方法数: 0)
+[Python]   * [类] MirrorSymmetryParams (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] Node (方法数: 22)
+[Python]       示例方法: ['__eq__', '__hash__', '__init__', '__repr__', '__setattr__']
+[Python]   * [类] NodeStack (方法数: 0)
+[Python]   * [类] NodeType (方法数: 0)
+[Python]   * [类] PaintEffectNode (方法数: 22)
+[Python]       示例方法: ['__eq__', '__hash__', '__init__', '__repr__', '__setattr__']
+[Python]   * [类] PaintLayerNode (方法数: 38)
+[Python]       示例方法: ['__eq__', '__hash__', '__init__', '__repr__', '__setattr__']
+[Python]   * [类] PlanarProjectionParams (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] Projection3DParams (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] ProjectionCullingParams (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] ProjectionMode (方法数: 0)
+[Python]   * [类] RadialSymmetryParams (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] ReadOnlyUid (方法数: 5)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__', '__setattr__', 'uid']
+[Python]   * [类] ScaleMode (方法数: 0)
+[Python]   * [类] ScopedModification (方法数: 3)
+[Python]       示例方法: ['__enter__', '__exit__', '__init__']
+[Python]   * [类] SelectionType (方法数: 0)
+[Python]   * [类] ShapeCropMode (方法数: 0)
+[Python]   * [类] SourceEditorMixin (方法数: 7)
+[Python]       示例方法: ['get_material_source', 'get_source', 'reset_material_source', 'reset_source', 'set_material_source']
+[Python]   * [类] SourceSubstance (方法数: 14)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__', '__setattr__', 'apply_preset']
+[Python]   * [类] SphericalProjectionParams (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] Stack (方法数: 16)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] SymmetryAxis (方法数: 0)
+[Python]   * [类] SymmetryMode (方法数: 0)
+[Python]   * [类] TextureSet (方法数: 22)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] TriplanarProjectionParams (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] UVProjectionParams (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] UVSetToUVSetProjectionParams (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] UVTile (方法数: 11)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] UVTransformationParams (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] UVWrapMode (方法数: 0)
+[Python]   * [类] WarpProjectionParams (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   其他/常量 (14):
+[Python] 
+[模块探测: substance_painter.properties]
+[Python]   类 (4):
+[Python]   * [类] Color (方法数: 4)
+[Python]       示例方法: ['_Color__convert', '_Color__expect_convert', '__init__', 'convert']
+[Python]   * [类] Property (方法数: 14)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   其他/常量 (4):
+[Python] 
+[模块探测: substance_painter.ui]
+[Python]   函数 (14):
+[Python]   - add_action(menu: _substance_painter.ui.ApplicationMenu, action: PySide6.QtGui.QAction)
+[Python]   - add_dock_widget(widget: PySide6.QtWidgets.QWidget, ui_modes: int = <UIMode.Edition: 1>) -> PySide6.QtWidgets.QDockWidget
+[Python]   - add_menu(menu: PySide6.QtWidgets.QMenu)
+[Python]   - add_plugins_toolbar_widget(widget: PySide6.QtWidgets.QWidget)
+[Python]   - add_toolbar(title: str, object_name: str, ui_modes: int = <UIMode.Edition: 1>) -> PySide6.QtWidgets.QToolBar
+[Python]   - delete_ui_element(element: PySide6.QtWidgets.QWidget)
+[Python]   - get_current_mode() -> _substance_painter.ui.UIMode
+[Python]   - get_layout(mode: _substance_painter.ui.UIMode) -> bytes
+[Python]   - get_layout_mode(layout: bytes) -> _substance_painter.ui.UIMode
+[Python]   - get_main_window() -> PySide6.QtWidgets.QMainWindow
+[Python]   - reset_layout(mode: _substance_painter.ui.UIMode)
+[Python]   - set_layout(layout: bytes) -> _substance_painter.ui.UIMode
+[Python]   - show_main_window()
+[Python]   - switch_to_mode(mode: _substance_painter.ui.UIMode) -> None
+[Python]   类 (2):
+[Python]   * [类] ApplicationMenu (方法数: 0)
+[Python]   * [类] UIMode (方法数: 0)
+[Python]   其他/常量 (2):
+[Python] 
+[模块探测: substance_painter.display]
+[Python]   函数 (6):
+[Python]   - get_color_lut_resource() -> 'typing.Optional[substance_painter.resource.ResourceID]'
+[Python]   - get_environment_resource() -> 'typing.Optional[substance_painter.resource.ResourceID]'
+[Python]   - get_tone_mapping() -> 'ToneMappingFunction'
+[Python]   - set_color_lut_resource(new_color_lut: 'substance_painter.resource.ResourceID') -> 'None'
+[Python]   - set_environment_resource(new_env_map: 'substance_painter.resource.ResourceID') -> 'None'
+[Python]   - set_tone_mapping(new_tone_mapping: 'ToneMappingFunction') -> 'None'
+[Python]   类 (4):
+[Python]   * [类] Camera (方法数: 4)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__', 'get_default_camera']
+[Python]   * [类] CameraProjectionType (方法数: 0)
+[Python]   * [类] ToneMappingFunction (方法数: 0)
+[Python]   其他/常量 (5):
+[Python] 
+[模块探测: substance_painter.event]
+[Python]   类 (66):
+[Python]   * [类] Any (方法数: 1)
+[Python]       示例方法: ['__new__']
+[Python]   * [类] BakingProcessAboutToStart (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] BakingProcessEnded (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] BakingProcessProgress (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] BakingStatus (方法数: 0)
+[Python]   * [类] BusyStatusChanged (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] CameraPropertiesChanged (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ChannelType (方法数: 0)
+[Python]   * [类] Dispatcher (方法数: 9)
+[Python]       示例方法: ['__init__', '_has_listeners', '_is_bound', '_is_in_edition_state', '_make_ref']
+[Python]   * [类] EngineComputationsStatusChanged (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] Event (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ExportStatus (方法数: 0)
+[Python]   * [类] ExportTexturesAboutToStart (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ExportTexturesEnded (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] GraphicalUserInterfaceStarted (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] LayerStacksModelDataChanged (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ProjectAboutToClose (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ProjectAboutToSave (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ProjectClosed (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ProjectCreated (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ProjectEditionEntered (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ProjectEditionLeft (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ProjectOpened (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ProjectSaved (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ReloadResourcesEnded (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ReloadResourcesStarted (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ReloadedResourceError (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ReloadedResourceResult (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ResourceID (方法数: 8)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ShelfCrawlingEnded (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ShelfCrawlingStarted (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] StopSource (方法数: 9)
+[Python]       示例方法: ['__bool__', '__delattr__', '__eq__', '__hash__', '__init__']
+[Python]   * [类] TextureStateEvent (方法数: 8)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] TextureStateEventAction (方法数: 0)
+[Python]   * [类] TypeVar (方法数: 8)
+[Python]       示例方法: ['__copy__', '__deepcopy__', '__init__', '__or__', '__reduce__']
+[Python]   其他/常量 (13):
+[Python] 
+[模块探测: substance_painter.export]
+[Python]   函数 (8):
+[Python]   - export_mesh(file_path: str, option: _substance_painter.export.MeshExportOption) -> substance_painter.export.MeshExportResult
+[Python]   - export_project_textures(json_config: dict) -> substance_painter.export.TextureExportResult
+[Python]   - get_default_export_path() -> str
+[Python]   - list_predefined_export_presets() -> List[substance_painter.export.PredefinedExportPreset]
+[Python]   - list_project_textures(json_config: dict) -> Dict[Tuple[str, str], List[str]]
+[Python]   - list_resource_export_presets() -> List[substance_painter.export.ResourceExportPreset]
+[Python]   - scene_has_tessellation() -> bool
+[Python]   - scene_is_triangulated() -> bool
+[Python]   类 (10):
+[Python]   * [类] ExportStatus (方法数: 0)
+[Python]   * [类] MeshExportOption (方法数: 0)
+[Python]   * [类] MeshExportResult (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] PredefinedExportPreset (方法数: 7)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ResourceExportPreset (方法数: 7)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] TextureExportResult (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   其他/常量 (6):
+[Python] 
+[模块探测: substance_painter.resource]
+[Python]   函数 (11):
+[Python]   - import_project_resource(file_path: str, resource_usage: substance_painter.resource.Usage, name: str = None, group: str = None) -> substance_painter.resource.Resource
+[Python]   - import_session_resource(file_path: str, resource_usage: substance_painter.resource.Usage, name: str = None, group: str = None) -> substance_painter.resource.Resource
+[Python]   - is_reload_modified_resources_running() -> bool
+[Python]   - list_layer_stack_resources() -> List[substance_painter.resource.ResourceID]
+[Python]   - list_project_outdated_resources() -> Dict[substance_painter.resource.ResourceID, substance_painter.resource.ResourceID]
+[Python]   - list_project_resources() -> List[substance_painter.resource.ResourceID]
+[Python]   - reload_modified_resources_async(resource_filter: Union[substance_painter.resource.AllResourcesFilter, substance_painter.resource.ProjectFilter, substance_painter.resource.ResourcesListFilter, substance_painter.resource.ResourcesUsedByProjectFilter, substance_painter.resource.SessionFilter, substance_painter.resource.ShelvesListFilter]) -> bool
+[Python]   - replace_project_resources(ids: Dict[substance_painter.resource.ResourceID, substance_painter.resource.ResourceID], allow_parameters_mismatch: bool = False) -> substance_painter.resource.UpdateProjectResult
+[Python]   - search(query: str) -> List[substance_painter.resource.Resource]
+[Python]   - show_resources_in_ui(resources: List[substance_painter.resource.Resource]) -> None
+[Python]   - update_layer_stack_resource(old_resource_id: substance_painter.resource.ResourceID, new_resource: substance_painter.resource.Resource) -> List[substance_painter.resource.ResourceID]
+[Python]   类 (29):
+[Python]   * [类] AllResourcesFilter (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] ProjectFilter (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] Resource (方法数: 20)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ResourceID (方法数: 8)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] ResourceLocation (方法数: 0)
+[Python]   * [类] ResourcesListFilter (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] ResourcesUsedByProjectFilter (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] SessionFilter (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] Shelf (方法数: 13)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] Shelves (方法数: 7)
+[Python]       示例方法: ['add', 'all', 'application_shelf', 'exists', 'refresh_all']
+[Python]   * [类] ShelvesListFilter (方法数: 3)
+[Python]       示例方法: ['__eq__', '__init__', '__repr__']
+[Python]   * [类] StandardQuery (方法数: 0)
+[Python]   * [类] Type (方法数: 0)
+[Python]   * [类] UpdateProjectError (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] UpdateProjectResult (方法数: 6)
+[Python]       示例方法: ['__delattr__', '__eq__', '__hash__', '__init__', '__repr__']
+[Python]   * [类] UpdateProjectStatus (方法数: 0)
+[Python]   * [类] Usage (方法数: 0)
+[Python]   其他/常量 (7):
+[Python] 
+==================================================
+[Python] 全量 API 嗅探完成！请在 Python Log 窗口查阅。
+[Python] ==================================================

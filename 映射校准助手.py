@@ -46,21 +46,41 @@ SPACE_ITEMS = ["物体", "视图", "纹理"]
 def get_current_tool_id():
     main_win = substance_painter.ui.get_main_window()
     if not main_win: return None
-    buttons = main_win.findChildren(QtWidgets.QToolButton)
+    
+    # 【优化】精准定位：只在左侧工具栏（Toolbar）中寻找
+    # 通常工具栏的 objectName 包含 "Toolbar"
+    toolbar = main_win.findChild(QtWidgets.QToolBar, "Toolbar") 
+    search_scope = toolbar if toolbar else main_win
+    
+    buttons = search_scope.findChildren(QtWidgets.QToolButton)
     for btn in buttons:
         if btn.isChecked():
             action = btn.defaultAction()
             if action:
                 action_id = action.objectName()
-                if action_id and not action_id.startswith("qt_"):
+                # 【优化】排除掉插件自身的按钮或常见的干扰 ID
+                if action_id and not action_id.startswith("qt_") and action_id != "enable":
                     return action_id
     return None
 
 def run_sync():
     if not substance_painter.project.is_open(): return
+
+    
     cfg = QtCore._auto_align_cfg
     if not cfg['enabled']: return
     current_id = get_current_tool_id()
+    #sp_logging.info(f"当前工具ID: {current_id}") # 看看控制台到底输出的是什么字符串
+    matched_group = None
+    for group_name, id_list in TOOL_LOGIC_GROUPS.items():
+        if current_id in id_list:
+            matched_group = group_name
+            break
+    if not matched_group or not cfg['active_groups'].get(matched_group, False): 
+        #sp_logging.info(f"非预设起作用的工具，跳过")
+        return
+
+
     pos = QtGui.QCursor.pos()
     widget = QtWidgets.QApplication.widgetAt(pos)
     view_type = None
@@ -72,36 +92,36 @@ def run_sync():
             if name == "Viewer3D": view_type = "3D"; break
             if name == "TextureViewer": view_type = "2D"; break
             curr = curr.parentWidget()
-    if current_id == cfg['last_tool'] and view_type == cfg['last_view']: return
+    if current_id == cfg['last_tool'] and view_type == cfg['last_view']: 
+        #sp_logging.info(f"视口或工具未改变，跳过")
+        return
     cfg['last_tool'] = current_id
     cfg['last_view'] = view_type
-    matched_group = None
-    for group_name, id_list in TOOL_LOGIC_GROUPS.items():
-        if current_id in id_list:
-            matched_group = group_name
-            break
-    if not matched_group or not cfg['active_groups'].get(matched_group, False): return
+
+
+
+
+
     if view_type:
-        try:
-            prefix = "3" if view_type == "3D" else "2"
-            target_a = cfg[f'{prefix}A']
-            target_s = cfg[f'{prefix}S']
-            main_win = substance_painter.ui.get_main_window()
-            tool_panel = main_win.findChild(QtWidgets.QWidget, "Tool")
-            if tool_panel and shiboken.isValid(tool_panel):
-                combos = tool_panel.findChildren(QtWidgets.QComboBox)
-                for cb in combos:
-                    if not shiboken.isValid(cb) or not cb.isVisible(): continue
-                    obj_name = cb.objectName().lower()
-                    if "alignment" in obj_name and cb.currentIndex() != target_a:
-                        cb.setCurrentIndex(target_a)
-                        cb.activated.emit(target_a)
-                        sp_logging.info(f"[助手] {view_type}同步成功: 校准 -> {ALIGN_ITEMS[target_a]}")
-                    if "size_space" in obj_name and cb.currentIndex() != target_s:
-                        cb.setCurrentIndex(target_s)
-                        cb.activated.emit(target_s)
-                        sp_logging.info(f"[助手] {view_type}同步成功: 间距大小 -> {ALIGN_ITEMS[target_s]}")
-        except Exception: pass
+        prefix = "3" if view_type == "3D" else "2"
+        target_a = cfg[f'{prefix}A']
+        target_s = cfg[f'{prefix}S']
+        main_win = substance_painter.ui.get_main_window()
+        tool_panel = main_win.findChild(QtWidgets.QWidget, "Tool")
+        if tool_panel and shiboken.isValid(tool_panel):
+            combos = tool_panel.findChildren(QtWidgets.QComboBox)
+            for cb in combos:
+                if not shiboken.isValid(cb) or not cb.isVisible(): continue
+                obj_name = cb.objectName().lower()
+                if "alignment" in obj_name and cb.currentIndex() != target_a:
+                    cb.setCurrentIndex(target_a)
+                    cb.activated.emit(target_a)
+                    #sp_logging.info(f"[助手] {view_type}同步成功: 校准 -> {ALIGN_ITEMS[target_a]}")
+                if "size_space" in obj_name and cb.currentIndex() != target_s:
+                    cb.setCurrentIndex(target_s)
+                    cb.activated.emit(target_s)
+                    #sp_logging.info(f"[助手] {view_type}同步成功: 间距大小 -> {ALIGN_ITEMS[target_s]}")
+
 
 # ==========================================
 # 3. UI 类 (修正销毁回调)
