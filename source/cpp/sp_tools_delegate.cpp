@@ -40,11 +40,17 @@ typedef void (*ResolveChannelsCallback)(int count,
                                         const wchar_t *const *buttonTexts);
 typedef void (*ValueRequestCallback)(void);
 typedef void (*FolderResolveCallback)(void);
+typedef void (*TextureSettingsCallback)(void);
+typedef void (*ViewChangedCallback)(void);
+typedef void (*AlignTickCallback)(void);
 
 ValueChangedCallback g_valueCallback = nullptr;
 ResolveChannelsCallback g_resolveCallback = nullptr;
 ValueRequestCallback g_valueRequestCallback = nullptr;
 FolderResolveCallback g_folderResolveCallback = nullptr;
+TextureSettingsCallback g_textureSettingsCallback = nullptr;
+ViewChangedCallback g_viewChangedCallback = nullptr;
+AlignTickCallback g_alignTickCallback = nullptr;
 
 struct ChannelInfo {
     QString id;
@@ -68,8 +74,15 @@ QVector<QPointer<QToolButton>> g_opacityButtons;
 QVector<QPointer<QSlider>> g_opacitySliders;
 QVector<QPointer<QLineEdit>> g_opacityEdits;
 QObject *g_refreshFilter = nullptr;
+QObject *g_appFilter = nullptr;
+QTimer *g_alignTimer = nullptr;
 bool g_refreshPending = false;
+bool g_tssPending = false;
+bool g_viewPending = false;
 bool g_enabled = true;
+// 宿主 SP 版本没有 sp.layerstack（如 Painter 7.x）时由 Python 置为 false：
+// 禁止注入图层控件面板，但校准助手的过滤器/定时器照常工作。
+bool g_layerToolsAvailable = true;
 bool g_syncing = false;
 bool g_folderMode = false;
 
@@ -448,6 +461,105 @@ private:
     }
 };
 
+// 纹理集设置面板级过滤器：面板打开后挂在控件自身，监听其刷新（不监听 Hide，
+// 避免销毁期回调）。
+class TextureSetSettingsFilter final : public QObject {
+public:
+    explicit TextureSetSettingsFilter(QWidget *widget) : QObject(widget) {}
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override {
+        (void)obj;
+        if (!g_enabled)
+            return false;
+        const QEvent::Type type = event->type();
+        if (type != QEvent::Polish && type != QEvent::LayoutRequest &&
+            type != QEvent::Resize && type != QEvent::Paint)
+            return false;
+        if (!g_tssPending) {
+            g_tssPending = true;
+            QTimer::singleShot(0, [] {
+                g_tssPending = false;
+                if (g_textureSettingsCallback)
+                    g_textureSettingsCallback();
+            });
+        }
+        return false;
+    }
+};
+
+// 应用级触发器：Show 发现纹理集设置面板（挂面板级过滤器 + 立即检查一次通道），
+// Enter/Leave 检测 3D/2D 视图进出（触发校准同步）。
+class AppTriggerFilter final : public QObject {
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override {
+        if (!g_enabled)
+            return false;
+        const QEvent::Type type = event->type();
+        if (type == QEvent::Show) {
+            if (isTextureSetSettings(obj)) {
+                auto *widget = static_cast<QWidget *>(obj);
+                if (widget != m_tssWidget) {
+                    m_tssWidget = widget;
+                    m_tssFilter = new TextureSetSettingsFilter(widget);
+                    widget->installEventFilter(m_tssFilter);
+                }
+                if (!g_tssPending) {
+                    g_tssPending = true;
+                    QTimer::singleShot(0, [] {
+                        g_tssPending = false;
+                        if (g_textureSettingsCallback)
+                            g_textureSettingsCallback();
+                    });
+                }
+            }
+        } else if (type == QEvent::Enter || type == QEvent::Leave) {
+            if (isInsideView(obj)) {
+                if (!g_viewPending) {
+                    g_viewPending = true;
+                    QTimer::singleShot(0, [] {
+                        g_viewPending = false;
+                        if (g_viewChangedCallback)
+                            g_viewChangedCallback();
+                    });
+                }
+            }
+        }
+        return false;
+    }
+
+private:
+    static bool isTextureSetSettings(QObject *obj) {
+        if (!obj || !obj->isWidgetType())
+            return false;
+        QWidget *widget = static_cast<QWidget *>(obj);
+        if (widget->objectName() == QStringLiteral("textureSetSettings"))
+            return true;
+        const QString title = widget->windowTitle();
+        return title.contains(QStringLiteral("纹理集设置")) ||
+               normalized(title).contains(QStringLiteral("texturesetsettings"));
+    }
+
+    static bool isInsideView(QObject *obj) {
+        for (QObject *current = obj; current; current = current->parent()) {
+            if (!current->isWidgetType())
+                continue;
+            const QString name = static_cast<QWidget *>(current)->objectName();
+            if (name == QStringLiteral("Viewer3D") ||
+                name == QStringLiteral("TextureViewer"))
+                return true;
+        }
+        return false;
+    }
+
+    // 用 QPointer 持有：面板销毁时自动置空，避免地址复用后继续使用悬垂过滤器
+    QPointer<QWidget> m_tssWidget;
+    QPointer<TextureSetSettingsFilter> m_tssFilter;
+};
+
 bool onPanelRefresh() {
     if (!g_enabled)
         return false;
@@ -459,7 +571,7 @@ bool onPanelRefresh() {
 }
 
 bool inject() {
-    if (!g_enabled)
+    if (!g_enabled || !g_layerToolsAvailable)
         return false;
     QWidget *panel = findPropertiesPanel();
     if (!panel)
@@ -610,7 +722,7 @@ bool pinThisDll() {
 } // namespace
 
 extern "C" __declspec(dllexport) int __cdecl sp_tools_api_version() {
-    return 4;
+    return 5;
 }
 
 extern "C" __declspec(dllexport) void __cdecl sp_tools_set_enabled(int enabled) {
@@ -619,6 +731,15 @@ extern "C" __declspec(dllexport) void __cdecl sp_tools_set_enabled(int enabled) 
         g_panelWidget->setVisible(g_enabled);
     if (g_enabled)
         inject();
+}
+
+extern "C" __declspec(dllexport) void __cdecl
+sp_tools_set_layer_tools_available(int available) {
+    g_layerToolsAvailable = available != 0;
+    if (!g_layerToolsAvailable) {
+        removePanel();
+        g_channels.clear();
+    }
 }
 
 extern "C" __declspec(dllexport) void __cdecl
@@ -639,6 +760,21 @@ sp_tools_set_value_request_callback(ValueRequestCallback callback) {
 extern "C" __declspec(dllexport) void __cdecl
 sp_tools_set_folder_resolve_callback(FolderResolveCallback callback) {
     g_folderResolveCallback = callback;
+}
+
+extern "C" __declspec(dllexport) void __cdecl
+sp_tools_set_texture_settings_callback(TextureSettingsCallback callback) {
+    g_textureSettingsCallback = callback;
+}
+
+extern "C" __declspec(dllexport) void __cdecl
+sp_tools_set_view_changed_callback(ViewChangedCallback callback) {
+    g_viewChangedCallback = callback;
+}
+
+extern "C" __declspec(dllexport) void __cdecl
+sp_tools_set_align_tick_callback(AlignTickCallback callback) {
+    g_alignTickCallback = callback;
 }
 
 extern "C" __declspec(dllexport) void __cdecl sp_tools_set_blend_modes(
@@ -707,6 +843,38 @@ extern "C" __declspec(dllexport) void __cdecl sp_tools_reinject() {
     inject();
 }
 
+extern "C" __declspec(dllexport) void __cdecl sp_tools_shutdown() {
+    // 关闭时先把 C++ 持有的 Python 回调全部清空并移除面板，
+    // 保证退出阶段不会调用到已被 Python 释放的回调（python311 崩溃点）。
+    g_enabled = false;
+    g_layerToolsAvailable = true;
+    g_valueCallback = nullptr;
+    g_resolveCallback = nullptr;
+    g_valueRequestCallback = nullptr;
+    g_folderResolveCallback = nullptr;
+    g_textureSettingsCallback = nullptr;
+    g_viewChangedCallback = nullptr;
+    g_alignTickCallback = nullptr;
+    if (g_refreshFilter) {
+        if (QCoreApplication::instance())
+            QCoreApplication::instance()->removeEventFilter(g_refreshFilter);
+        delete g_refreshFilter;
+        g_refreshFilter = nullptr;
+    }
+    if (g_appFilter) {
+        if (QCoreApplication::instance())
+            QCoreApplication::instance()->removeEventFilter(g_appFilter);
+        delete g_appFilter;
+        g_appFilter = nullptr;
+    }
+    if (g_alignTimer) {
+        g_alignTimer->stop();
+        delete g_alignTimer;
+        g_alignTimer = nullptr;
+    }
+    removePanel();
+}
+
 extern "C" __declspec(dllexport) void __cdecl sp_tools_set_folder_mode(int enabled) {
     const bool folder = enabled != 0;
     if (folder == g_folderMode)
@@ -732,13 +900,47 @@ extern "C" __declspec(dllexport) int __cdecl sp_tools_install(void *appPtr) {
         quitHookConnected = true;
         QObject::connect(application, &QCoreApplication::aboutToQuit, [] {
             g_enabled = false;
-            if (g_refreshFilter)
+            g_valueCallback = nullptr;
+            g_resolveCallback = nullptr;
+            g_valueRequestCallback = nullptr;
+            g_folderResolveCallback = nullptr;
+            g_textureSettingsCallback = nullptr;
+            g_viewChangedCallback = nullptr;
+            g_alignTickCallback = nullptr;
+            if (g_refreshFilter) {
                 QCoreApplication::instance()->removeEventFilter(g_refreshFilter);
+                delete g_refreshFilter;
+                g_refreshFilter = nullptr;
+            }
+            if (g_appFilter) {
+                QCoreApplication::instance()->removeEventFilter(g_appFilter);
+                delete g_appFilter;
+                g_appFilter = nullptr;
+            }
+            if (g_alignTimer) {
+                g_alignTimer->stop();
+                delete g_alignTimer;
+                g_alignTimer = nullptr;
+            }
+            removePanel();
         });
     }
     if (!g_refreshFilter) {
         g_refreshFilter = new PanelRefreshFilter();
         application->installEventFilter(g_refreshFilter);
+    }
+    if (!g_appFilter) {
+        g_appFilter = new AppTriggerFilter();
+        application->installEventFilter(g_appFilter);
+    }
+    if (!g_alignTimer) {
+        g_alignTimer = new QTimer(application);
+        g_alignTimer->setInterval(500);
+        QObject::connect(g_alignTimer, &QTimer::timeout, [] {
+            if (g_alignTickCallback)
+                g_alignTickCallback();
+        });
+        g_alignTimer->start();
     }
     inject();
     return 1;

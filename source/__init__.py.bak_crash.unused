@@ -9,8 +9,7 @@ sp_tools — Substance 3D Painter 属性面板图层工具插件（混合式架�
   * Python 负责数据：读写图层的混合模式与不透明度（sp.layerstack），
     通过 ctypes 与 C++ 双向同步（通道列表 / 当前值下行，控件改动上行）。
 
-支持：Adobe Substance 3D Painter 7.2-10.0（PySide2 / Qt5）与
-      10.1+（PySide6 / Qt6），按运行环境自动选择对应原生 DLL。
+支持：Adobe Substance 3D Painter 10.1+（PySide6 / Qt6）。
 """
 
 import ctypes
@@ -31,11 +30,6 @@ try:
     from shiboken6 import getCppPointer, isValid as _is_valid
 except ImportError:
     from shiboken2 import getCppPointer, isValid as _is_valid
-
-# 宿主 SP 是否提供 sp.layerstack（图层混合模式/不透明度数据接口）。
-# Painter 7.x（如 2021）没有该模块：图层 UI 整体禁用，校准助手不受影响。
-_HAS_LAYERSTACK = bool(getattr(sp, "layerstack", None)) and \
-    hasattr(getattr(sp, "layerstack", None), "BlendingMode")
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 NATIVE_DIR = os.path.join(PLUGIN_DIR, "native")
@@ -196,16 +190,10 @@ _RESOLVE_CALLBACK_TYPE = ctypes.CFUNCTYPE(
 )
 _VALUE_REQUEST_TYPE = ctypes.CFUNCTYPE(None)
 _FOLDER_RESOLVE_CALLBACK_TYPE = ctypes.CFUNCTYPE(None)
-_TEXTURE_SETTINGS_CALLBACK_TYPE = ctypes.CFUNCTYPE(None)
-_VIEW_CHANGED_CALLBACK_TYPE = ctypes.CFUNCTYPE(None)
-_ALIGN_TICK_CALLBACK_TYPE = ctypes.CFUNCTYPE(None)
 _value_callback_handle = None
 _resolve_callback_handle = None
 _value_request_handle = None
 _folder_resolve_handle = None
-_texture_settings_handle = None
-_view_changed_handle = None
-_align_tick_handle = None
 _NATIVE_CHANNELS = []  # [(ChannelType, label)]，顺序与按钮一致
 _LAST_FOLDER_PROBE_NAME = ""  # 已提示过“不支持接口”的文件夹名（防刷屏）
 
@@ -227,14 +215,6 @@ def _load_native():
         dll.sp_tools_set_value_request_callback.restype = None
         dll.sp_tools_set_folder_resolve_callback.argtypes = [ctypes.c_void_p]
         dll.sp_tools_set_folder_resolve_callback.restype = None
-        dll.sp_tools_set_texture_settings_callback.argtypes = [ctypes.c_void_p]
-        dll.sp_tools_set_texture_settings_callback.restype = None
-        dll.sp_tools_set_view_changed_callback.argtypes = [ctypes.c_void_p]
-        dll.sp_tools_set_view_changed_callback.restype = None
-        dll.sp_tools_set_align_tick_callback.argtypes = [ctypes.c_void_p]
-        dll.sp_tools_set_align_tick_callback.restype = None
-        dll.sp_tools_set_layer_tools_available.argtypes = [ctypes.c_int]
-        dll.sp_tools_set_layer_tools_available.restype = None
         dll.sp_tools_set_folder_mode.argtypes = [ctypes.c_int]
         dll.sp_tools_set_folder_mode.restype = None
         dll.sp_tools_set_blend_modes.argtypes = [
@@ -260,7 +240,7 @@ def _load_native():
         dll.sp_tools_shutdown.restype = None
         dll.sp_tools_install.argtypes = [ctypes.c_void_p]
         dll.sp_tools_install.restype = ctypes.c_int
-        if dll.sp_tools_api_version() != 5:
+        if dll.sp_tools_api_version() != 4:
             print(">>> sp_tools: 原生模块 API 版本不匹配")
             return None
         _native = dll
@@ -465,8 +445,6 @@ def _folder_blending_channel(layer):
 
 
 def _sync_blend_modes_to_native():
-    if not _HAS_LAYERSTACK:
-        return
     dll = _load_native()
     if dll is None:
         return
@@ -546,12 +524,33 @@ _LAST_SELECTED_UID = None
 _STACK_PENDING = False
 _PLUGIN_CLOSING = False
 _SESSION_CLOSING = False
+_TSS_SHOW_FILTER = None
+_TSS_WIDGET_FILTER = None
 
 
 def _make_inert():
-    """让插件进入会话关闭态：后续所有回调直接返回，不再触碰任何控件/API。"""
-    global _SESSION_CLOSING
+    """让插件进入会话关闭态：摘除全部事件钩子、停定时器、丢引用，
+    确保 Painter 的 QML/控件销毁风暴期间 Python 不再被 Qt 回调。"""
+    global _SESSION_CLOSING, _TSS_SHOW_FILTER, _TSS_WIDGET_FILTER
+    global _align_view_filter, _align_timer
     _SESSION_CLOSING = True
+    app = QtWidgets.QApplication.instance()
+    if _safe(app):
+        for hook in (_TSS_SHOW_FILTER, _align_view_filter):
+            if hook is not None:
+                try:
+                    app.removeEventFilter(hook)
+                except Exception:
+                    pass
+    _TSS_SHOW_FILTER = None
+    _TSS_WIDGET_FILTER = None
+    _align_view_filter = None
+    if _align_timer is not None:
+        try:
+            _align_timer.stop()
+        except Exception:
+            pass
+        _align_timer = None
 
 
 def _early_teardown():
@@ -559,6 +558,23 @@ def _early_teardown():
     global _PLUGIN_CLOSING
     _PLUGIN_CLOSING = True
     _make_inert()
+
+
+def _install_hooks():
+    """安装/恢复事件钩子（启动、以及工程重新打开后恢复）。"""
+    global _SESSION_CLOSING, _TSS_SHOW_FILTER
+    _SESSION_CLOSING = False
+    app = QtWidgets.QApplication.instance()
+    if not _safe(app):
+        return
+    if _TSS_SHOW_FILTER is None:
+        _TSS_SHOW_FILTER = _TextureSetSettingsShowFilter()
+        app.installEventFilter(_TSS_SHOW_FILTER)
+    try:
+        app.aboutToQuit.connect(_early_teardown)
+    except Exception:
+        pass
+    _align_start(sp.ui.get_main_window())
 
 
 def _channel_list_changed():
@@ -607,16 +623,6 @@ def _on_stack_changed(_event):
     QtCore.QTimer.singleShot(80, _stack_changed_debounced)
 
 
-def _stack_change_event_class():
-    """图层切换监听事件：新版优先 LayerStacksModelDataChanged；
-    老版本（如 Painter 7.x）没有该事件时退回 TextureStateEvent 兜底。
-    两个事件都缺失时返回 None（跳过绑定，功能降级但不报错）。"""
-    return (
-        getattr(sp.event, "LayerStacksModelDataChanged", None)
-        or getattr(sp.event, "TextureStateEvent", None)
-    )
-
-
 def _stack_changed_debounced():
     """图层切换重建：uid 变了或通道集合变了才全量下发+重建。"""
     if _PLUGIN_CLOSING or _SESSION_CLOSING:
@@ -641,8 +647,22 @@ def _stack_changed_debounced():
     _sync_values_to_native()
 
 
+def _is_texture_set_settings_widget(obj):
+    """判断是否纹理集设置面板（objectName=textureSetSettings 或标题“纹理集设置”）。"""
+    if not _safe(obj):
+        return False
+    try:
+        name = obj.objectName() or ""
+        title = obj.windowTitle() or ""
+    except Exception:
+        return False
+    return name == "textureSetSettings" or \
+        "纹理集设置" in title or \
+        "texturesetsettings" in _normalize(title)
+
+
 def _on_texture_set_settings_changed():
-    """纹理集设置面板刷新（C++ 触发）：通道集合变了才重建（新建/删除通道）。"""
+    """纹理集设置面板刷新：通道集合变了才重建（新建/删除通道）。"""
     if _PLUGIN_CLOSING or _SESSION_CLOSING:
         return
     dll = _load_native()
@@ -655,25 +675,64 @@ def _on_texture_set_settings_changed():
     _sync_values_to_native()
 
 
-def _on_texture_settings_refresh():
-    """C++ 纹理集设置面板刷新回调入口。"""
+def _attach_tss_widget_filter(widget):
+    """把面板级过滤器装到纹理集设置控件上（只处理该控件子树，不扫全控件）。"""
+    global _TSS_WIDGET_FILTER
+    if _TSS_WIDGET_FILTER is not None and _safe(_TSS_WIDGET_FILTER) and \
+            _TSS_WIDGET_FILTER.parent() is widget:
+        return
+    _TSS_WIDGET_FILTER = _TextureSetSettingsWidgetFilter(widget)
+    widget.installEventFilter(_TSS_WIDGET_FILTER)
+
+
+def _schedule_tss_check():
     if _PLUGIN_CLOSING or _SESSION_CLOSING:
         return
-    _on_texture_set_settings_changed()
+    QtCore.QTimer.singleShot(0, _on_texture_set_settings_changed)
 
 
-def _on_view_changed():
-    """C++ 3D/2D 视图进出回调入口：触发校准同步。"""
-    if _PLUGIN_CLOSING or _SESSION_CLOSING:
-        return
-    _align_run_sync()
+class _TextureSetSettingsShowFilter(QtCore.QObject):
+    """应用级（只监听 Show）：面板打开时挂面板级过滤器并检查一次通道。"""
+    def eventFilter(self, obj, event):
+        if _PLUGIN_CLOSING or _SESSION_CLOSING:
+            return False
+        try:
+            if event.type() == QtCore.QEvent.Show:
+                if _is_texture_set_settings_widget(obj):
+                    _attach_tss_widget_filter(obj)
+                    _schedule_tss_check()
+        except Exception:
+            pass
+        return False
 
 
-def _on_align_tick():
-    """C++ 0.5s 校准定时器回调入口。"""
-    if _PLUGIN_CLOSING or _SESSION_CLOSING:
-        return
-    _align_run_sync()
+class _TextureSetSettingsWidgetFilter(QtCore.QObject):
+    """面板级：只处理该控件子树事件，不监听 Hide，避免销毁期访问失效控件。"""
+    def __init__(self, widget):
+        super().__init__(widget)
+        self._pending = False
+
+    def eventFilter(self, obj, event):
+        if _PLUGIN_CLOSING or _SESSION_CLOSING:
+            return False
+        try:
+            if event.type() not in (
+                QtCore.QEvent.Polish,
+                QtCore.QEvent.LayoutRequest,
+                QtCore.QEvent.Resize,
+                QtCore.QEvent.Paint,
+            ):
+                return False
+            if not self._pending:
+                self._pending = True
+                QtCore.QTimer.singleShot(0, self._on_refresh)
+        except Exception:
+            pass
+        return False
+
+    def _on_refresh(self):
+        self._pending = False
+        _on_texture_set_settings_changed()
 
 
 def _on_project_opened(_event):
@@ -688,6 +747,7 @@ def _project_opened_debounced():
         return
     _LAST_SELECTED_UID = None
     _SESSION_CLOSING = False
+    _install_hooks()
     dll = _load_native()
     if dll is None:
         return
@@ -746,6 +806,8 @@ SPACE_ITEMS = ["物体", "视图", "纹理"]
 _align_sync_error_logged = False
 _align_tool_buttons = []
 _align_toolbars = []
+_align_view_filter = None
+_align_timer = None
 _align_ui = None
 _align_action = None
 
@@ -893,6 +955,78 @@ def _align_on_toolbar_actions_changed():
     QtCore.QTimer.singleShot(0, _align_install_tool_buttons)
 
 
+def _align_is_view_widget(obj):
+    """判断 obj 是否位于 3D/2D 视图控件内。"""
+    current = obj
+    for _depth in range(10):
+        if not _is_valid(current):
+            return False
+        try:
+            if current.objectName() in ("Viewer3D", "TextureViewer"):
+                return True
+        except Exception:
+            return False
+        try:
+            current = current.parentWidget() if current.isWidgetType() else None
+        except Exception:
+            return False
+    return False
+
+
+def _align_is_tool_panel(obj):
+    """判断 obj 是否位于 “Tool” 属性面板内。"""
+    current = obj
+    for _depth in range(10):
+        if not _is_valid(current):
+            return False
+        try:
+            if current.objectName() == "Tool":
+                return True
+        except Exception:
+            return False
+        try:
+            current = current.parentWidget() if current.isWidgetType() else None
+        except Exception:
+            return False
+    return False
+
+
+def _align_schedule_sync():
+    if _align_view_filter is not None and not _align_view_filter._pending:
+        _align_view_filter._pending = True
+        QtCore.QTimer.singleShot(0, _align_flush_sync)
+
+
+def _align_flush_sync():
+    if _PLUGIN_CLOSING or _SESSION_CLOSING:
+        return
+    if _align_view_filter is not None:
+        _align_view_filter._pending = False
+    _align_run_sync()
+
+
+class _AlignEventFilter(QtCore.QObject):
+    """事件驱动触发器：视图 Enter/Leave、Tool 面板 Show/Hide。"""
+    def __init__(self):
+        super().__init__()
+        self._pending = False
+
+    def eventFilter(self, obj, event):
+        if _PLUGIN_CLOSING or _SESSION_CLOSING:
+            return False
+        try:
+            etype = event.type()
+            if etype in (QtCore.QEvent.Enter, QtCore.QEvent.Leave):
+                if _align_is_view_widget(obj):
+                    _align_schedule_sync()
+            elif etype in (QtCore.QEvent.Show, QtCore.QEvent.Hide):
+                if _align_is_tool_panel(obj):
+                    _align_schedule_sync()
+        except Exception:
+            pass
+        return False
+
+
 class _AlignControl(QtWidgets.QDialog):
     def __init__(self):
         super().__init__(sp.ui.get_main_window())
@@ -983,16 +1117,27 @@ def _align_show_ui():
 
 
 def _align_start(main_window):
-    """启动映射校准助手：菜单入口 + 工具按钮监听（视图进出与定时器由 C++ 负责）。"""
-    global _align_action
+    """启动映射校准助手：菜单入口 + 事件监听（工具切换/视图进出/Tool 面板显示）。"""
+    global _align_view_filter, _align_timer, _align_action
+    if _align_view_filter is not None:
+        return
     if not _safe(main_window):
         return
     _align_remove_menu(main_window)
+    app = QtWidgets.QApplication.instance()
+    _align_view_filter = _AlignEventFilter()
+    if _safe(app):
+        app.installEventFilter(_align_view_filter)
     _align_install_tool_buttons()
     _align_action = main_window.menuBar().addAction("映射校准助手")
     _align_action.setObjectName("MappingHelperAction")
     _align_action.triggered.connect(_align_show_ui)
-    sp_logging.info(">>> 映射校准助手已启用（C++ 触发 + 0.5s 兜底）")
+    # 0.5 秒兜底对账：事件驱动为主，定时器只在事件丢失时补一次
+    _align_timer = QtCore.QTimer()
+    _align_timer.setInterval(500)
+    _align_timer.timeout.connect(_align_run_sync)
+    _align_timer.start()
+    sp_logging.info(">>> 映射校准助手已启用（事件驱动 + 0.5s 兜底）")
 
 
 def _align_remove_menu(main_window=None):
@@ -1015,8 +1160,27 @@ def _align_remove_menu(main_window=None):
 
 def _align_stop():
     """安全、彻底地销毁映射校准助手资源。"""
-    global _align_toolbars
+    global _align_view_filter, _align_timer, _align_toolbars
     global _align_ui, _align_tool_buttons, _align_action
+    if _align_timer is not None:
+        try:
+            _align_timer.stop()
+            _align_timer.timeout.disconnect()
+        except Exception:
+            pass
+        try:
+            _align_timer.deleteLater()
+        except Exception:
+            pass
+        _align_timer = None
+    if _align_view_filter is not None:
+        app = QtWidgets.QApplication.instance()
+        if _safe(app):
+            try:
+                app.removeEventFilter(_align_view_filter)
+            except Exception:
+                pass
+        _align_view_filter = None
     for toolbar in _align_toolbars:
         try:
             if _is_valid(toolbar):
@@ -1051,7 +1215,6 @@ def start_plugin():
     global _PLUGIN_CLOSING
     global _value_callback_handle, _resolve_callback_handle
     global _value_request_handle, _folder_resolve_handle
-    global _texture_settings_handle, _view_changed_handle, _align_tick_handle
     app = QtWidgets.QApplication.instance()
     main_window = sp.ui.get_main_window()
     if not _safe(app) or not _safe(main_window):
@@ -1075,57 +1238,37 @@ def start_plugin():
             _folder_resolve_handle = _FOLDER_RESOLVE_CALLBACK_TYPE(
                 _on_resolve_folder)
             dll.sp_tools_set_folder_resolve_callback(_folder_resolve_handle)
-            _texture_settings_handle = _TEXTURE_SETTINGS_CALLBACK_TYPE(
-                _on_texture_settings_refresh)
-            dll.sp_tools_set_texture_settings_callback(_texture_settings_handle)
-            _view_changed_handle = _VIEW_CHANGED_CALLBACK_TYPE(
-                _on_view_changed)
-            dll.sp_tools_set_view_changed_callback(_view_changed_handle)
-            _align_tick_handle = _ALIGN_TICK_CALLBACK_TYPE(_on_align_tick)
-            dll.sp_tools_set_align_tick_callback(_align_tick_handle)
 
-            if _HAS_LAYERSTACK:
-                _sync_blend_modes_to_native()
-            else:
-                print(">>> sp_tools: 当前 SP 无 sp.layerstack 接口，"
-                      "图层混合模式 UI 已禁用（仅启用映射校准助手）")
+            _sync_blend_modes_to_native()
 
             pointer = getCppPointer(app)[0]
             dll.sp_tools_install(ctypes.c_void_p(pointer))
-            dll.sp_tools_set_layer_tools_available(1 if _HAS_LAYERSTACK else 0)
             dll.sp_tools_set_enabled(1)
     except Exception as exc:
         print(">>> sp_tools 启动原生模块失败:", exc)
 
     for event_cls, callback in (
-        (_stack_change_event_class(), _on_stack_changed),
+        (getattr(sp.event, "LayerStacksModelDataChanged", None), _on_stack_changed),
         (getattr(sp.event, "ProjectOpened", None), _on_project_opened),
         (getattr(sp.event, "ProjectAboutToClose", None), _on_project_closing),
     ):
         if event_cls is None:
             continue
         try:
-            # 老版本（如 Painter 7.x）可能没有 connect_strong，退回弱连接 connect
-            connector = getattr(sp.event.DISPATCHER, "connect_strong", None) or \
-                sp.event.DISPATCHER.connect
-            connector(event_cls, callback)
+            sp.event.DISPATCHER.connect_strong(event_cls, callback)
         except Exception as exc:
             print(">>> sp_tools 事件绑定失败:", exc)
 
-    try:
-        app.aboutToQuit.connect(_early_teardown)
-    except Exception:
-        pass
-    _align_start(main_window)
+    _install_hooks()
 
     print(">>> sp_tools 插件已启动（属性面板图层工具 + 映射校准助手）")
 
 
 def close_plugin():
     _early_teardown()
+    global _TSS_SHOW_FILTER, _TSS_WIDGET_FILTER
     global _value_callback_handle, _resolve_callback_handle
     global _value_request_handle, _folder_resolve_handle
-    global _texture_settings_handle, _view_changed_handle, _align_tick_handle
     app = QtWidgets.QApplication.instance()
     if _safe(app):
         try:
@@ -1140,8 +1283,17 @@ def close_plugin():
         except Exception:
             pass
     _align_stop()
+    if _TSS_SHOW_FILTER is not None:
+        app = QtWidgets.QApplication.instance()
+        if _safe(app):
+            try:
+                app.removeEventFilter(_TSS_SHOW_FILTER)
+            except Exception:
+                pass
+        _TSS_SHOW_FILTER = None
+    _TSS_WIDGET_FILTER = None
     for event_cls, callback in (
-        (_stack_change_event_class(), _on_stack_changed),
+        (getattr(sp.event, "LayerStacksModelDataChanged", None), _on_stack_changed),
         (getattr(sp.event, "ProjectOpened", None), _on_project_opened),
         (getattr(sp.event, "ProjectAboutToClose", None), _on_project_closing),
     ):
@@ -1156,6 +1308,3 @@ def close_plugin():
     _resolve_callback_handle = None
     _value_request_handle = None
     _folder_resolve_handle = None
-    _texture_settings_handle = None
-    _view_changed_handle = None
-    _align_tick_handle = None
