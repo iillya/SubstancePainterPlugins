@@ -30,16 +30,6 @@ C:\Users\<用户名>\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\
 - Painter 7.2–10.0（Qt5 / PySide2），10.1+（Qt6 / PySide6）。
 - 图层工具需 Painter 10.0+；7.x–9.x 仅映射校准助手可用。
 
-## 编译（可选）
-
-需要 Windows x64、CMake 与 MSVC（Visual Studio 2022 Build Tools），Qt SDK 位于 `sp_tools\sdks\qt\`。在插件根目录执行：
-
-```text
-python source/cpp/build_package.py
-```
-
-产物为 `sp_layer_tools_delegate_qt5.dll` 与 `sp_layer_tools_delegate_qt6.dll`，需放入 `native/`。
-
 ## 安全说明
 
 插件只修改图层的显示参数，不修改项目数据文件；数值写入走官方接口，可正常撤销。
