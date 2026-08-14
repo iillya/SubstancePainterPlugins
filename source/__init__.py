@@ -597,7 +597,7 @@ def _layers_dock():
 
 
 def _on_stack_changed(_event):
-    """图层栈变化（主要来自图层切换）：去抖后对比选中节点，变了才重建。"""
+    """图层栈变化（切换/数值改动）：去抖后按需重建，并同步数值。"""
     if _PLUGIN_CLOSING or _SESSION_CLOSING:
         return
     global _STACK_PENDING
@@ -618,7 +618,7 @@ def _stack_change_event_class():
 
 
 def _stack_changed_debounced():
-    """图层切换重建：uid 变了或通道集合变了才全量下发+重建。"""
+    """图层栈变化刷新：节点/通道集合变了才重建，数值变化只同步值。"""
     if _PLUGIN_CLOSING or _SESSION_CLOSING:
         return
     global _STACK_PENDING, _LAST_SELECTED_UID
@@ -633,11 +633,11 @@ def _stack_changed_debounced():
     except Exception:
         uid = None
     channel_changed = _channel_list_changed()
-    if uid == _LAST_SELECTED_UID and not channel_changed:
-        return
-    _LAST_SELECTED_UID = uid
-    _push_channels_to_native()
-    dll.sp_tools_reinject()
+    if uid != _LAST_SELECTED_UID or channel_changed:
+        _LAST_SELECTED_UID = uid
+        _push_channels_to_native()
+        dll.sp_tools_reinject()
+    # 同一图层内混合模式/不透明度被原生面板改动时，也要回写自定义控件
     _sync_values_to_native()
 
 
@@ -725,6 +725,7 @@ if not hasattr(QtCore, "_auto_align_cfg"):
     QtCore._auto_align_cfg = {
         "3A": 1, "3S": 0,
         "2A": 3, "2S": 2,
+        "layer_tools_enabled": True,
         "enabled": True,
         "last_view": None,
         "last_tool": None,
@@ -893,11 +894,23 @@ def _align_on_toolbar_actions_changed():
     QtCore.QTimer.singleShot(0, _align_install_tool_buttons)
 
 
+def _apply_layer_tools_enabled():
+    """按开关状态启用/禁用属性面板图层工具（注入控件 + 克隆原生菜单）。"""
+    dll = _load_native()
+    if dll is None:
+        return
+    enabled = (QtCore._auto_align_cfg.get("layer_tools_enabled", True)
+               and _HAS_LAYERSTACK)
+    dll.sp_tools_set_layer_tools_available(1 if enabled else 0)
+    if enabled:
+        dll.sp_tools_reinject()
+
+
 class _AlignControl(QtWidgets.QDialog):
     def __init__(self):
         super().__init__(sp.ui.get_main_window())
         self.setObjectName("MappingAlignHelperUI")
-        self.setWindowTitle("映射校准助手")
+        self.setWindowTitle("Substance Painter工具")
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
         self.setMinimumWidth(380)
         self.cfg = QtCore._auto_align_cfg
@@ -907,14 +920,34 @@ class _AlignControl(QtWidgets.QDialog):
 
         credit = QtWidgets.QLabel(
             '<a href="https://space.bilibili.com/281243426" '
-            'style="color: #66aaff;">本插件由 bilibili 神说要凑数 制作，点击可查看作者主页</a>',
+            'style="color: #66aaff;">本插件由 bilibili 神说要凑数 制作，'
+            "点击可查看作者主页</a>"
+            "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"
+            '<a href="https://github.com/iillya/sp_tools" '
+            'style="color: #66aaff;">GitHub 仓库</a>',
             self,
         )
         credit.setOpenExternalLinks(True)
         credit.setToolTip("打开 bilibili 作者主页")
         layout.addWidget(credit)
 
-        tool_group = QtWidgets.QGroupBox("受影响的工具")
+        layer_group = QtWidgets.QGroupBox("属性面板图层工具")
+        layer_layout = QtWidgets.QVBoxLayout(layer_group)
+        self.layer_tools_check = QtWidgets.QCheckBox(
+            "在属性面板中注入混合模式/不透明度控件")
+        self.layer_tools_check.setChecked(
+            self.cfg.get("layer_tools_enabled", True) and _HAS_LAYERSTACK)
+        self.layer_tools_check.toggled.connect(self._toggle_layer_tools)
+        layer_layout.addWidget(self.layer_tools_check)
+        if not _HAS_LAYERSTACK:
+            self.layer_tools_check.setEnabled(False)
+            layer_hint = QtWidgets.QLabel(
+                "当前 SP 版本缺少 sp.layerstack 接口，图层工具不可用")
+            layer_hint.setStyleSheet("color: #b08d57;")
+            layer_layout.addWidget(layer_hint)
+        layout.addWidget(layer_group)
+
+        tool_group = QtWidgets.QGroupBox("映射校准受影响的工具")
         grid_layout = QtWidgets.QGridLayout(tool_group)
         group_names = ["绘画", "几何体填充", "橡皮", "涂抹",
                        "沿路径绘制", "克隆", "映射", "材质选择器"]
@@ -965,6 +998,10 @@ class _AlignControl(QtWidgets.QDialog):
         self.cfg["enabled"] = checked
         self.update_style(checked)
 
+    def _toggle_layer_tools(self, checked):
+        self.cfg["layer_tools_enabled"] = checked
+        _apply_layer_tools_enabled()
+
     def closeEvent(self, event):
         global _align_ui
         _align_ui = None
@@ -989,7 +1026,7 @@ def _align_start(main_window):
         return
     _align_remove_menu(main_window)
     _align_install_tool_buttons()
-    _align_action = main_window.menuBar().addAction("映射校准助手")
+    _align_action = main_window.menuBar().addAction("SP工具")
     _align_action.setObjectName("MappingHelperAction")
     _align_action.triggered.connect(_align_show_ui)
     sp_logging.info(">>> 映射校准助手已启用（C++ 触发 + 0.5s 兜底）")
@@ -1004,6 +1041,8 @@ def _align_remove_menu(main_window=None):
         return
     for action in main_window.menuBar().actions():
         if action.objectName() == "MappingHelperAction" or \
+                action.text() == "sp工具" or \
+                action.text() == "Substance Painter工具" or \
                 action.text() == "映射校准助手":
             main_window.menuBar().removeAction(action)
             try:
@@ -1092,7 +1131,7 @@ def start_plugin():
 
             pointer = getCppPointer(app)[0]
             dll.sp_tools_install(ctypes.c_void_p(pointer))
-            dll.sp_tools_set_layer_tools_available(1 if _HAS_LAYERSTACK else 0)
+            _apply_layer_tools_enabled()
             dll.sp_tools_set_enabled(1)
     except Exception as exc:
         print(">>> sp_tools 启动原生模块失败:", exc)
