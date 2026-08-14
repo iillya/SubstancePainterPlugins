@@ -1,10 +1,10 @@
-# sp_tools —— Substance 3D Painter 属性面板图层工具
+# Substance 3D Painter工具
 
 为 Substance 3D Painter 提供两个工具：属性面板图层工具与映射校准助手。
 
 ## 安装
 
-将 `sp_tools` 文件夹整体复制到：
+将 `Releases` 发布包解压到：
 
 ```text
 C:\Users\<用户名>\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\
