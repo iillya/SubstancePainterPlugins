@@ -24,6 +24,12 @@ C:\Users\<用户名>\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\
 
 根据当前工具与 3D/2D 视图，自动切换“校准”与“间距大小”预设。可在“SP工具”窗口中选择受影响的工具组、设置 3D/2D 预设，并一键开关自动校准。
 
+### 在线更新
+
+“SP工具”窗口右上角提供“检查插件更新”按钮。插件通过 GitHub Releases 查询最新正式版，发现新版本后可直接下载并原地更新，完成后重启 Painter 即可生效。
+
+更新包必须带有 GitHub 提供的 SHA-256 摘要，并通过文件白名单、版本、CRC、路径与解压大小校验；校验失败不会安装。更新前会在本机应用数据目录备份当前版本，写入失败时自动回滚。
+
 ## 兼容性
 
 - Windows 10 / 11（64 位）。
@@ -33,6 +39,8 @@ C:\Users\<用户名>\Documents\Adobe\Adobe Substance 3D Painter\python\plugins\
 ## 安全说明
 
 插件只修改图层的显示参数，不修改项目数据文件；数值写入走官方接口，可正常撤销。
+
+在线更新只接受 `iillya/sp_tools` 官方 GitHub Release 的 HTTPS 下载地址和以下四个发布文件：`__init__.py`、`README.md`、Qt5 DLL 与 Qt6 DLL。
 
 ## 作者与仓库
 

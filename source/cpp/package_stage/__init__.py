@@ -14,8 +14,16 @@ sp_tools — Substance 3D Painter 属性面板图层工具插件（混合式架�
 """
 
 import ctypes
+import hashlib
+import json
 import os
 import re
+import shutil
+import tempfile
+import threading
+import urllib.parse
+import urllib.request
+import zipfile
 
 import substance_painter as sp
 import substance_painter.logging as sp_logging
@@ -39,6 +47,20 @@ _HAS_LAYERSTACK = bool(getattr(sp, "layerstack", None)) and \
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 NATIVE_DIR = os.path.join(PLUGIN_DIR, "native")
+PLUGIN_VERSION = "1.0.1"
+PLUGIN_REPO = "iillya/sp_tools"
+PLUGIN_RELEASE_URL = "https://api.github.com/repos/%s/releases/latest" % PLUGIN_REPO
+PLUGIN_ASSET_NAME = "sp_tools.zip"
+MAX_UPDATE_DOWNLOAD_BYTES = 16 * 1024 * 1024
+MAX_UPDATE_EXPANDED_BYTES = 24 * 1024 * 1024
+MAX_UPDATE_FILE_BYTES = 16 * 1024 * 1024
+RELEASE_FILE_ALLOWLIST = {
+    "__init__.py",
+    "README.md",
+    "native/sp_layer_tools_delegate_qt5.dll",
+    "native/sp_layer_tools_delegate_qt6.dll",
+}
+REQUIRED_UPDATE_FILES = RELEASE_FILE_ALLOWLIST
 DELEGATE_DLL_PATH = os.path.join(
     NATIVE_DIR,
     "sp_layer_tools_delegate_qt5.dll" if QT_MAJOR == 5
@@ -546,6 +568,7 @@ _LAST_SELECTED_UID = None
 _STACK_PENDING = False
 _PLUGIN_CLOSING = False
 _SESSION_CLOSING = False
+_ABOUT_TO_QUIT_CONNECTED = False
 
 
 def _make_inert():
@@ -701,7 +724,8 @@ def _on_project_closing(_event):
     if _PLUGIN_CLOSING or _SESSION_CLOSING:
         return
     _make_inert()
-    dll = _load_native()
+    # 项目关闭阶段只停用已加载模块，绝不在销毁流程中加载新 DLL。
+    dll = _native
     if dll is not None:
         dll.sp_tools_set_enabled(0)
 
@@ -749,6 +773,7 @@ _align_tool_buttons = []
 _align_toolbars = []
 _align_ui = None
 _align_action = None
+_align_started = False
 
 
 def _align_get_current_tool_id():
@@ -915,11 +940,339 @@ def _apply_layer_tools_enabled():
         dll.sp_tools_reinject()
 
 
+def _version_tuple(version):
+    """把 v1.2.3 / 1.2 等版本号转换为可比较的三元组。"""
+    parts = []
+    for part in re.split(r"[._-]", str(version).strip().lstrip("vV")):
+        match = re.match(r"\d+", part)
+        if not match:
+            break
+        parts.append(int(match.group()))
+        if len(parts) == 3:
+            break
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+def _latest_release_info():
+    request = urllib.request.Request(
+        PLUGIN_RELEASE_URL,
+        headers={"User-Agent": "sp_tools-updater"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    tag = str(data.get("tag_name") or "").strip()
+    if not tag:
+        raise RuntimeError("GitHub 返回的发布信息缺少版本号。")
+    selected = None
+    for asset in data.get("assets") or []:
+        name = str(asset.get("name") or "").strip()
+        lowered = name.casefold()
+        if name == PLUGIN_ASSET_NAME or (
+                lowered.startswith("sp_tools") and lowered.endswith(".zip")):
+            selected = asset
+            break
+    if selected is None:
+        raise RuntimeError("最新发布中没有找到 sp_tools ZIP 安装包。")
+    url = str(selected.get("browser_download_url") or "")
+    digest = str(selected.get("digest") or "")
+    if not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
+        raise RuntimeError(
+            "GitHub 发布资产缺少 SHA-256 摘要，已拒绝不安全的更新。"
+        )
+    return tag.lstrip("vV"), url, str(data.get("body") or ""), \
+        digest.split(":", 1)[1].lower()
+
+
+def _normalized_zip_name(info):
+    raw = info.filename.replace("\\", "/")
+    parts = [part for part in raw.split("/") if part not in ("", ".")]
+    unsafe = (
+        not parts or raw.startswith("/") or any(part == ".." for part in parts)
+        or (len(raw) > 1 and raw[1] == ":")
+        or any(":" in part or part.endswith((".", " ")) for part in parts)
+        or ((info.external_attr >> 16) & 0o170000) == 0o120000
+    )
+    if unsafe:
+        raise RuntimeError("更新包包含不安全路径或链接: %s" % info.filename)
+    return "/".join(parts)
+
+
+def _validate_update_archive(path, expected_version=None):
+    with zipfile.ZipFile(path) as archive:
+        infos = archive.infolist()
+        if len(infos) > 16:
+            raise RuntimeError("更新包文件数超过安全上限。")
+        files = set()
+        folded = set()
+        expanded = 0
+        for info in infos:
+            name = _normalized_zip_name(info)
+            key = name.casefold()
+            if key in folded:
+                raise RuntimeError("更新包包含重复路径: %s" % name)
+            folded.add(key)
+            if info.is_dir():
+                continue
+            if info.flag_bits & 0x1:
+                raise RuntimeError("更新包包含加密文件: %s" % name)
+            if info.file_size > MAX_UPDATE_FILE_BYTES:
+                raise RuntimeError("更新包单个文件过大: %s" % name)
+            expanded += info.file_size
+            if expanded > MAX_UPDATE_EXPANDED_BYTES:
+                raise RuntimeError("更新包解压总大小超过安全上限。")
+            files.add(name)
+        missing = REQUIRED_UPDATE_FILES.difference(files)
+        unexpected = files.difference(RELEASE_FILE_ALLOWLIST)
+        if missing:
+            raise RuntimeError("更新包缺少必要文件: %s" % sorted(missing))
+        if unexpected:
+            raise RuntimeError("更新包包含非白名单文件: %s" % sorted(unexpected))
+        source = archive.read("__init__.py").decode("utf-8-sig")
+        match = re.search(
+            r'^PLUGIN_VERSION\s*=\s*["\']([^"\']+)["\']',
+            source,
+            re.MULTILINE,
+        )
+        packaged = match.group(1) if match else ""
+        if expected_version and packaged != str(expected_version).lstrip("vV"):
+            raise RuntimeError(
+                "更新包版本 %r 与发布版本 %r 不一致。" %
+                (packaged, expected_version)
+            )
+        bad_member = archive.testzip()
+        if bad_member:
+            raise RuntimeError("更新包 CRC 校验失败: %s" % bad_member)
+
+
+class _DownloadCancelled(Exception):
+    pass
+
+
+class _DownloadProgressDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("下载更新")
+        self.setMinimumWidth(420)
+        layout = QtWidgets.QVBoxLayout(self)
+        self.label = QtWidgets.QLabel("正在下载更新…", self)
+        self.bar = QtWidgets.QProgressBar(self)
+        self.cancel_button = QtWidgets.QPushButton("取消", self)
+        layout.addWidget(self.label)
+        layout.addWidget(self.bar)
+        layout.addWidget(self.cancel_button)
+        self.bar.setRange(0, 0)
+        self.cancelled = False
+        self.cancel_button.clicked.connect(self._cancel)
+
+    def _cancel(self):
+        self.cancelled = True
+        self.cancel_button.setEnabled(False)
+        self.label.setText("正在取消…")
+
+    def reject(self):
+        self._cancel()
+
+    def set_progress(self, downloaded, total):
+        if total > 0:
+            self.bar.setRange(0, 100)
+            self.bar.setValue(int(downloaded * 100.0 / total))
+            self.label.setText("正在下载更新… %d KB / %d KB" %
+                               (downloaded // 1024, total // 1024))
+
+
+def _download_update(url, destination, expected_sha256, expected_version,
+                     progress=None, cancelled=None):
+    parsed = urllib.parse.urlparse(url)
+    expected_prefix = "/%s/releases/download/" % PLUGIN_REPO
+    if (parsed.scheme != "https" or parsed.hostname != "github.com"
+            or not parsed.path.startswith(expected_prefix)):
+        raise RuntimeError("更新下载地址不是预期的 GitHub Release 资产。")
+    request = urllib.request.Request(url, headers={"User-Agent": "sp_tools-updater"})
+    digest = hashlib.sha256()
+    with urllib.request.urlopen(request, timeout=15) as response:
+        final = urllib.parse.urlparse(response.geturl())
+        if final.scheme != "https" or final.hostname not in {
+                "github.com", "objects.githubusercontent.com",
+                "release-assets.githubusercontent.com"}:
+            raise RuntimeError("更新下载被重定向到了非 GitHub 地址。")
+        try:
+            total = int(response.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            total = 0
+        if total > MAX_UPDATE_DOWNLOAD_BYTES:
+            raise RuntimeError("更新包大小超过安全上限。")
+        downloaded = 0
+        with open(destination, "wb") as stream:
+            while True:
+                if cancelled is not None and cancelled():
+                    raise _DownloadCancelled()
+                chunk = response.read(256 * 1024)
+                if not chunk:
+                    break
+                downloaded += len(chunk)
+                if downloaded > MAX_UPDATE_DOWNLOAD_BYTES:
+                    raise RuntimeError("更新包大小超过安全上限。")
+                stream.write(chunk)
+                digest.update(chunk)
+                if progress is not None:
+                    progress(downloaded, total)
+    if digest.hexdigest() != expected_sha256:
+        raise RuntimeError("更新包 SHA-256 校验失败，已拒绝安装。")
+    _validate_update_archive(destination, expected_version)
+
+
+def _copy_update_file(source, target):
+    try:
+        shutil.copy2(source, target)
+    except PermissionError:
+        if not target.lower().endswith(".dll"):
+            raise
+        moved = target + ".old"
+        if os.path.isfile(moved):
+            os.remove(moved)
+        os.rename(target, moved)
+        shutil.copy2(source, target)
+
+
+def _apply_update_now(zip_path, parent):
+    scope = hashlib.sha256(os.path.normcase(PLUGIN_DIR).encode("utf-8")).hexdigest()[:12]
+    backup = os.path.join(
+        os.environ.get("LOCALAPPDATA") or tempfile.gettempdir(),
+        "sp_tools_backup_" + scope,
+    )
+    stage = tempfile.mkdtemp(prefix="sp_tools_update_")
+    try:
+        _validate_update_archive(zip_path)
+        with zipfile.ZipFile(zip_path) as archive:
+            for info in archive.infolist():
+                name = _normalized_zip_name(info)
+                if info.is_dir():
+                    continue
+                target = os.path.abspath(os.path.join(stage, *name.split("/")))
+                if os.path.commonpath((stage, target)) != stage:
+                    raise RuntimeError("更新包成员越过暂存目录。")
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with archive.open(info) as source, open(target, "wb") as output:
+                    shutil.copyfileobj(source, output, length=256 * 1024)
+        if os.path.isdir(backup):
+            shutil.rmtree(backup)
+        shutil.copytree(PLUGIN_DIR, backup)
+        try:
+            for name in sorted(RELEASE_FILE_ALLOWLIST):
+                source = os.path.join(stage, *name.split("/"))
+                target = os.path.join(PLUGIN_DIR, *name.split("/"))
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                _copy_update_file(source, target)
+        except Exception:
+            for name in sorted(RELEASE_FILE_ALLOWLIST):
+                source = os.path.join(backup, *name.split("/"))
+                target = os.path.join(PLUGIN_DIR, *name.split("/"))
+                if os.path.isfile(source):
+                    _copy_update_file(source, target)
+            raise
+        QtWidgets.QMessageBox.information(
+            parent, "更新完成", "新版本已安装。请重启 Substance 3D Painter。"
+        )
+        return True
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+        try:
+            os.remove(zip_path)
+        except OSError:
+            pass
+
+
+def _check_updates(parent=None):
+    if parent is None:
+        parent = QtWidgets.QApplication.activeWindow()
+    try:
+        version, download_url, notes, expected_sha256 = _latest_release_info()
+        if _version_tuple(version) <= _version_tuple(PLUGIN_VERSION):
+            QtWidgets.QMessageBox.information(
+                parent, "检查更新", "当前已是最新版本 v%s" % PLUGIN_VERSION
+            )
+            return
+        preview = "\n".join(line for line in notes.splitlines() if line.strip())[:300]
+        message = "发现新版本 %s（当前 %s）。" % (version, PLUGIN_VERSION)
+        if preview:
+            message += "\n\n更新说明：\n" + preview
+        message += "\n\n是否下载安装？"
+        answer = QtWidgets.QMessageBox.question(
+            parent, "发现新版本", message,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.Yes,
+        )
+        if answer != QtWidgets.QMessageBox.Yes:
+            return
+        descriptor, destination = tempfile.mkstemp(
+            prefix="sp_tools_update_", suffix=".zip",
+            dir=os.path.dirname(PLUGIN_DIR),
+        )
+        os.close(descriptor)
+        dialog = _DownloadProgressDialog(parent)
+        state = {"done": False, "error": None, "downloaded": 0, "total": 0}
+
+        def worker_run():
+            try:
+                _download_update(
+                    download_url, destination, expected_sha256, version,
+                    lambda done, total: state.update(downloaded=done, total=total),
+                    lambda: dialog.cancelled,
+                )
+            except _DownloadCancelled:
+                state["error"] = "cancelled"
+            except Exception as exc:
+                state["error"] = str(exc)
+            state["done"] = True
+
+        worker = threading.Thread(target=worker_run, daemon=True)
+        worker.start()
+
+        def tick():
+            if state["done"]:
+                dialog.accept()
+            else:
+                dialog.set_progress(state["downloaded"], state["total"])
+                QtCore.QTimer.singleShot(100, tick)
+
+        QtCore.QTimer.singleShot(0, tick)
+        dialog.exec_()
+        worker.join()
+        if state["error"] == "cancelled":
+            try:
+                os.remove(destination)
+            except OSError:
+                pass
+            return
+        if state["error"]:
+            raise RuntimeError(state["error"])
+        _apply_update_now(destination, parent)
+    except Exception as exc:
+        QtWidgets.QMessageBox.warning(
+            parent, "检查更新失败",
+            "无法获取或安装最新版本：\n%s\n\n请确认网络可访问 GitHub。" % exc,
+        )
+
+
+def _cleanup_update_remnants():
+    try:
+        for name in os.listdir(NATIVE_DIR):
+            if name.lower().endswith(".dll.old"):
+                try:
+                    os.remove(os.path.join(NATIVE_DIR, name))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
 class _AlignControl(QtWidgets.QDialog):
     def __init__(self):
         super().__init__(sp.ui.get_main_window())
         self.setObjectName("MappingAlignHelperUI")
-        self.setWindowTitle("Substance Painter工具")
+        self.setWindowTitle("Substance Painter工具 v%s" % PLUGIN_VERSION)
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
         self.setMinimumWidth(380)
         self.cfg = QtCore._auto_align_cfg
@@ -938,7 +1291,13 @@ class _AlignControl(QtWidgets.QDialog):
         )
         credit.setOpenExternalLinks(True)
         credit.setToolTip("打开 bilibili 作者主页")
-        layout.addWidget(credit)
+        top_row = QtWidgets.QHBoxLayout()
+        top_row.addWidget(credit, 1)
+        self.update_button = QtWidgets.QPushButton("检查插件更新", self)
+        self.update_button.setToolTip("从 GitHub Releases 检查并安装最新正式版")
+        self.update_button.clicked.connect(lambda: _check_updates(self))
+        top_row.addWidget(self.update_button)
+        layout.addLayout(top_row)
 
         layer_group = QtWidgets.QGroupBox("属性面板图层工具")
         layer_layout = QtWidgets.QVBoxLayout(layer_group)
@@ -1041,7 +1400,7 @@ def _align_show_ui():
 
 def _align_start(main_window):
     """启动映射校准助手：菜单入口、监听与首次同步。"""
-    global _align_action
+    global _align_action, _align_started
     if not _safe(main_window):
         return
     _align_remove_menu(main_window)
@@ -1049,11 +1408,11 @@ def _align_start(main_window):
     _align_action = main_window.menuBar().addAction("SP工具")
     _align_action.setObjectName("MappingHelperAction")
     _align_action.triggered.connect(_align_show_ui)
+    _align_started = True
     # 启动时不会天然产生“切换工具 / 进入视图”的事件；延后两轮事件循环
     # 再同步一次，确保 Painter 的工具属性面板已经创建完成。
     QtCore.QTimer.singleShot(0, _align_run_sync)
     QtCore.QTimer.singleShot(250, _align_run_sync)
-    sp_logging.info(">>> 映射校准助手已启用（C++ 触发 + 0.5s 兜底）")
 
 
 def _align_remove_menu(main_window=None):
@@ -1079,7 +1438,11 @@ def _align_remove_menu(main_window=None):
 def _align_stop():
     """安全、彻底地销毁映射校准助手资源。"""
     global _align_toolbars
-    global _align_ui, _align_tool_buttons, _align_action
+    global _align_ui, _align_tool_buttons, _align_action, _align_started
+    was_started = bool(
+        _align_started or _align_action is not None or _align_ui is not None
+        or _align_tool_buttons or _align_toolbars
+    )
     for toolbar in _align_toolbars:
         try:
             if _is_valid(toolbar):
@@ -1095,23 +1458,27 @@ def _align_stop():
             pass
     _align_tool_buttons = []
     if _align_ui is not None:
+        dialog = _align_ui
+        _align_ui = None
         try:
-            if _is_valid(_align_ui):
-                _align_ui.close()
-                _align_ui.deleteLater()
+            if _is_valid(dialog):
+                # 窗口启用了 WA_DeleteOnClose，close() 会安排安全销毁。
+                dialog.close()
         except Exception:
             pass
-        _align_ui = None
     try:
         _align_remove_menu()
     except Exception:
         pass
     _align_action = None
-    sp_logging.info(">>> 映射校准助手已关闭")
+    _align_started = False
+    if was_started:
+        sp_logging.info(">>> 映射校准助手已关闭")
 
 
 def start_plugin():
-    global _PLUGIN_CLOSING, _SESSION_CLOSING
+    global _PLUGIN_CLOSING, _SESSION_CLOSING, _ABOUT_TO_QUIT_CONNECTED
+    global _STACK_PENDING, _LAST_SELECTED_UID
     global _value_callback_handle, _resolve_callback_handle
     global _value_request_handle, _folder_resolve_handle
     global _texture_settings_handle, _view_changed_handle, _align_tick_handle
@@ -1125,6 +1492,9 @@ def start_plugin():
     # close_plugin() 会把会话标记为关闭。插件在已打开项目中加载/重载时
     # 不会收到 ProjectOpened 事件来复位它，必须在启动完成清理后立即恢复。
     _SESSION_CLOSING = False
+    _STACK_PENDING = False
+    _LAST_SELECTED_UID = None
+    _cleanup_update_remnants()
 
     try:
         dll = _load_native()
@@ -1180,8 +1550,9 @@ def start_plugin():
 
     try:
         app.aboutToQuit.connect(_early_teardown)
+        _ABOUT_TO_QUIT_CONNECTED = True
     except Exception:
-        pass
+        _ABOUT_TO_QUIT_CONNECTED = False
     _align_start(main_window)
 
     print(">>> sp_tools 插件已启动（属性面板图层工具 + 映射校准助手）")
@@ -1189,17 +1560,21 @@ def start_plugin():
 
 def close_plugin():
     _early_teardown()
+    global _ABOUT_TO_QUIT_CONNECTED
     global _value_callback_handle, _resolve_callback_handle
     global _value_request_handle, _folder_resolve_handle
     global _texture_settings_handle, _view_changed_handle, _align_tick_handle
     app = QtWidgets.QApplication.instance()
-    if _safe(app):
+    if _safe(app) and _ABOUT_TO_QUIT_CONNECTED:
         try:
             app.aboutToQuit.disconnect(_early_teardown)
         except Exception:
             pass
+        finally:
+            _ABOUT_TO_QUIT_CONNECTED = False
     # 第一步就让 C++ 清空回调指针并移除面板，避免退出阶段调用已释放的 Python 回调
-    dll = _load_native()
+    # 清理阶段不得为了调用 shutdown 反向加载尚未使用的 DLL。
+    dll = _native
     if dll is not None:
         try:
             dll.sp_tools_shutdown()
