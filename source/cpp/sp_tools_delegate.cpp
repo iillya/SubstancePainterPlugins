@@ -7,7 +7,7 @@
 //   * 面板被 Painter 重建时自动重新注入（QPointer + 事件过滤器）
 //   * 用户改动控件时通过 ctypes 回调通知 Python 写回图层
 //
-// Python 通过 ctypes 调用本模块：通道/混合模式列表、图层当前值由 Python 下发。
+// Python 通过 ctypes 调用本模块：图层数据和映射校准配置由 Python 下发。
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QEvent>
@@ -16,6 +16,7 @@
 #include <QtCore/QStringList>
 #include <QtCore/QTimer>
 #include <QtCore/QVector>
+#include <QtGui/QCursor>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QBoxLayout>
 #include <QtWidgets/QComboBox>
@@ -37,20 +38,15 @@ namespace {
 typedef void (*ValueChangedCallback)(int channelIndex, const wchar_t *modeName,
                                      double opacity);
 typedef void (*ResolveChannelsCallback)(int count,
-                                        const wchar_t *const *buttonTexts);
+                                        const wchar_t *const *labels,
+                                        const wchar_t *const *keys);
 typedef void (*ValueRequestCallback)(void);
-typedef void (*FolderResolveCallback)(void);
 typedef void (*TextureSettingsCallback)(void);
-typedef void (*ViewChangedCallback)(void);
-typedef void (*AlignTickCallback)(void);
 
 ValueChangedCallback g_valueCallback = nullptr;
 ResolveChannelsCallback g_resolveCallback = nullptr;
 ValueRequestCallback g_valueRequestCallback = nullptr;
-FolderResolveCallback g_folderResolveCallback = nullptr;
 TextureSettingsCallback g_textureSettingsCallback = nullptr;
-ViewChangedCallback g_viewChangedCallback = nullptr;
-AlignTickCallback g_alignTickCallback = nullptr;
 
 struct ChannelInfo {
     QString id;
@@ -85,6 +81,99 @@ bool g_enabled = true;
 bool g_layerToolsAvailable = true;
 bool g_syncing = false;
 bool g_folderMode = false;
+bool g_alignEnabled = true;
+QSet<QString> g_alignToolIds;
+int g_align3A = 1;
+int g_align3S = 0;
+int g_align2A = 3;
+int g_align2S = 2;
+QVector<QPointer<QToolButton>> g_alignToolButtons;
+
+void alignNow();
+
+bool isAlignToolButton(QToolButton *button) {
+    return button && button->defaultAction() &&
+           g_alignToolIds.contains(button->defaultAction()->objectName());
+}
+
+void installAlignToolListeners() {
+    for (QWidget *widget : QApplication::allWidgets()) {
+        auto *button = qobject_cast<QToolButton *>(widget);
+        if (!isAlignToolButton(button) || g_alignToolButtons.contains(button))
+            continue;
+        g_alignToolButtons.append(button);
+        QObject::connect(button, &QToolButton::toggled, button, [](bool checked) {
+            if (checked)
+                alignNow();
+        });
+    }
+    for (int i = g_alignToolButtons.size() - 1; i >= 0; --i) {
+        if (!g_alignToolButtons.at(i))
+            g_alignToolButtons.remove(i);
+    }
+}
+
+QString currentAlignToolId() {
+    installAlignToolListeners();
+    for (const QPointer<QToolButton> &button : g_alignToolButtons) {
+        if (button && button->isChecked() && isAlignToolButton(button))
+            return button->defaultAction()->objectName();
+    }
+    return QString();
+}
+
+int viewAtCursor() {
+    QWidget *current = QApplication::widgetAt(QCursor::pos());
+    QSet<QWidget *> visited;
+    for (int depth = 0; current && depth < 16; ++depth) {
+        if (visited.contains(current))
+            break;
+        visited.insert(current);
+        if (current->objectName() == QStringLiteral("Viewer3D"))
+            return 3;
+        if (current->objectName() == QStringLiteral("TextureViewer"))
+            return 2;
+        current = current->parentWidget();
+    }
+    return 0;
+}
+
+void setComboIndex(QComboBox *combo, int target) {
+    if (!combo || !combo->isVisible() || combo->currentIndex() == target ||
+        target < 0 || target >= combo->count())
+        return;
+    combo->setCurrentIndex(target);
+    QMetaObject::invokeMethod(combo, "activated", Qt::DirectConnection,
+                              Q_ARG(int, target));
+}
+
+void alignNow() {
+    if (!g_enabled || !g_alignEnabled || g_alignToolIds.isEmpty() ||
+        currentAlignToolId().isEmpty())
+        return;
+    const int view = viewAtCursor();
+    if (!view)
+        return;
+    QWidget *toolPanel = nullptr;
+    for (QWidget *widget : QApplication::allWidgets()) {
+        if (widget->objectName() == QStringLiteral("Tool") &&
+            widget->isVisible()) {
+            toolPanel = widget;
+            break;
+        }
+    }
+    if (!toolPanel)
+        return;
+    const int targetA = view == 3 ? g_align3A : g_align2A;
+    const int targetS = view == 3 ? g_align3S : g_align2S;
+    for (QComboBox *combo : toolPanel->findChildren<QComboBox *>()) {
+        const QString name = combo->objectName().toLower();
+        if (name.contains(QStringLiteral("alignment")))
+            setComboIndex(combo, targetA);
+        else if (name.contains(QStringLiteral("size_space")))
+            setComboIndex(combo, targetS);
+    }
+}
 
 QString normalized(const QString &text) {
     QString out;
@@ -171,6 +260,54 @@ QList<QToolButton *> findChannelButtons(QWidget *panel) {
                   return a->geometry().x() < b->geometry().x();
               });
     return result;
+}
+
+QComboBox *findLayerChannelCombo() {
+    for (QWidget *widget : QApplication::allWidgets()) {
+        auto *dock = qobject_cast<QDockWidget *>(widget);
+        if (!dock)
+            continue;
+        const QString title = dock->windowTitle();
+        if (!title.contains(QStringLiteral("图层")) &&
+            !normalized(title).contains(QStringLiteral("layers")))
+            continue;
+        for (QComboBox *combo : dock->findChildren<QComboBox *>()) {
+            if (combo->objectName() == QStringLiteral("channelSelector") &&
+                combo->isVisible())
+                return combo;
+        }
+    }
+    return nullptr;
+}
+
+void requestChannelResolution() {
+    if (!g_resolveCallback)
+        return;
+    QComboBox *combo = findLayerChannelCombo();
+    if (!combo) {
+        g_resolveCallback(0, nullptr, nullptr);
+        return;
+    }
+    QVector<QString> labels;
+    QVector<QString> keys;
+    QVector<const wchar_t *> labelPointers;
+    QVector<const wchar_t *> keyPointers;
+    labels.reserve(combo->count());
+    keys.reserve(combo->count());
+    labelPointers.reserve(combo->count());
+    keyPointers.reserve(combo->count());
+    for (int i = 0; i < combo->count(); ++i) {
+        labels.append(combo->itemText(i));
+        keys.append(combo->itemData(i).toString());
+    }
+    for (int i = 0; i < labels.size(); ++i) {
+        labelPointers.append(
+            reinterpret_cast<const wchar_t *>(labels.at(i).utf16()));
+        keyPointers.append(
+            reinterpret_cast<const wchar_t *>(keys.at(i).utf16()));
+    }
+    g_resolveCallback(labels.size(), labelPointers.constData(),
+                      keyPointers.constData());
 }
 
 void applyReferenceStyle(QWidget *propertiesPanel, QToolButton *blendButton,
@@ -522,8 +659,7 @@ protected:
                     g_viewPending = true;
                     QTimer::singleShot(0, [] {
                         g_viewPending = false;
-                        if (g_viewChangedCallback)
-                            g_viewChangedCallback();
+                        alignNow();
                     });
                 }
             }
@@ -544,7 +680,9 @@ private:
     }
 
     static bool isInsideView(QObject *obj) {
-        for (QObject *current = obj; current; current = current->parent()) {
+        int depth = 0;
+        for (QObject *current = obj; current && depth < 16;
+             current = current->parent(), ++depth) {
             if (!current->isWidgetType())
                 continue;
             const QString name = static_cast<QWidget *>(current)->objectName();
@@ -584,26 +722,14 @@ bool inject() {
         // 通道列表由 Python 按 all_channels() 全量下发（行数=通道数）；
         // 按钮只用来定位插入锚点，数量与通道数不需要一致。
         if (g_channels.isEmpty()) {
-            if (g_resolveCallback) {
-                QVector<QString> texts;
-                QVector<const wchar_t *> pointers;
-                texts.reserve(buttons.size());
-                pointers.reserve(buttons.size());
-                for (const QToolButton *button : buttons) {
-                    texts.append(button->text().trimmed());
-                    pointers.append(
-                        reinterpret_cast<const wchar_t *>(texts.last().utf16()));
-                }
-                g_resolveCallback(pointers.size(), pointers.constData());
-            }
+            requestChannelResolution();
             if (g_channels.isEmpty())
                 return false;
         }
     } else {
         // 文件夹模式：属性面板没有通道按钮，通道列表由 Python 按纹理集下发
         if (g_channels.isEmpty()) {
-            if (g_folderResolveCallback)
-                g_folderResolveCallback();
+            requestChannelResolution();
             if (g_channels.isEmpty())
                 return false;
         }
@@ -722,7 +848,7 @@ bool pinThisDll() {
 } // namespace
 
 extern "C" __declspec(dllexport) int __cdecl sp_tools_api_version() {
-    return 5;
+    return 7;
 }
 
 extern "C" __declspec(dllexport) void __cdecl sp_tools_set_enabled(int enabled) {
@@ -758,23 +884,25 @@ sp_tools_set_value_request_callback(ValueRequestCallback callback) {
 }
 
 extern "C" __declspec(dllexport) void __cdecl
-sp_tools_set_folder_resolve_callback(FolderResolveCallback callback) {
-    g_folderResolveCallback = callback;
-}
-
-extern "C" __declspec(dllexport) void __cdecl
 sp_tools_set_texture_settings_callback(TextureSettingsCallback callback) {
     g_textureSettingsCallback = callback;
 }
 
-extern "C" __declspec(dllexport) void __cdecl
-sp_tools_set_view_changed_callback(ViewChangedCallback callback) {
-    g_viewChangedCallback = callback;
-}
-
-extern "C" __declspec(dllexport) void __cdecl
-sp_tools_set_align_tick_callback(AlignTickCallback callback) {
-    g_alignTickCallback = callback;
+extern "C" __declspec(dllexport) void __cdecl sp_tools_set_align_config(
+    int enabled, int toolCount, const wchar_t *const *toolIds,
+    int align3A, int align3S, int align2A, int align2S) {
+    g_alignEnabled = enabled != 0;
+    g_alignToolIds.clear();
+    for (int i = 0; i < toolCount; ++i) {
+        if (toolIds && toolIds[i])
+            g_alignToolIds.insert(QString::fromWCharArray(toolIds[i]));
+    }
+    g_align3A = align3A;
+    g_align3S = align3S;
+    g_align2A = align2A;
+    g_align2S = align2S;
+    installAlignToolListeners();
+    alignNow();
 }
 
 extern "C" __declspec(dllexport) void __cdecl sp_tools_set_blend_modes(
@@ -843,6 +971,10 @@ extern "C" __declspec(dllexport) void __cdecl sp_tools_reinject() {
     inject();
 }
 
+extern "C" __declspec(dllexport) void __cdecl sp_tools_request_channels() {
+    requestChannelResolution();
+}
+
 extern "C" __declspec(dllexport) void __cdecl sp_tools_shutdown() {
     // 关闭时先把 C++ 持有的 Python 回调全部清空并移除面板，
     // 保证退出阶段不会调用到已被 Python 释放的回调（python311 崩溃点）。
@@ -851,10 +983,9 @@ extern "C" __declspec(dllexport) void __cdecl sp_tools_shutdown() {
     g_valueCallback = nullptr;
     g_resolveCallback = nullptr;
     g_valueRequestCallback = nullptr;
-    g_folderResolveCallback = nullptr;
     g_textureSettingsCallback = nullptr;
-    g_viewChangedCallback = nullptr;
-    g_alignTickCallback = nullptr;
+    // 工具按钮连接以按钮自身为 context。热重载时保留 QPointer 列表，避免
+    // 下一次 install 重复连接；已销毁按钮会在下一轮扫描中自动清除。
     if (g_refreshFilter) {
         if (QCoreApplication::instance())
             QCoreApplication::instance()->removeEventFilter(g_refreshFilter);
@@ -903,10 +1034,8 @@ extern "C" __declspec(dllexport) int __cdecl sp_tools_install(void *appPtr) {
             g_valueCallback = nullptr;
             g_resolveCallback = nullptr;
             g_valueRequestCallback = nullptr;
-            g_folderResolveCallback = nullptr;
             g_textureSettingsCallback = nullptr;
-            g_viewChangedCallback = nullptr;
-            g_alignTickCallback = nullptr;
+            g_alignToolButtons.clear();
             if (g_refreshFilter) {
                 QCoreApplication::instance()->removeEventFilter(g_refreshFilter);
                 delete g_refreshFilter;
@@ -935,11 +1064,9 @@ extern "C" __declspec(dllexport) int __cdecl sp_tools_install(void *appPtr) {
     }
     if (!g_alignTimer) {
         g_alignTimer = new QTimer(application);
-        g_alignTimer->setInterval(500);
-        QObject::connect(g_alignTimer, &QTimer::timeout, [] {
-            if (g_alignTickCallback)
-                g_alignTickCallback();
-        });
+        // 映射校准采用简单的 200ms 实际值核对；只有值不一致时才写入。
+        g_alignTimer->setInterval(200);
+        QObject::connect(g_alignTimer, &QTimer::timeout, [] { alignNow(); });
         g_alignTimer->start();
     }
     inject();

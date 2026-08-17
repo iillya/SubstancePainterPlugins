@@ -47,7 +47,7 @@ _HAS_LAYERSTACK = bool(getattr(sp, "layerstack", None)) and \
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 NATIVE_DIR = os.path.join(PLUGIN_DIR, "native")
-PLUGIN_VERSION = "1.0.1"
+PLUGIN_VERSION = "1.0.2"
 PLUGIN_REPO = "iillya/sp_tools"
 PLUGIN_RELEASE_URL = "https://api.github.com/repos/%s/releases/latest" % PLUGIN_REPO
 PLUGIN_ASSET_NAME = "sp_tools.zip"
@@ -214,20 +214,15 @@ _VALUE_CALLBACK_TYPE = ctypes.CFUNCTYPE(
     None, ctypes.c_int, ctypes.c_wchar_p, ctypes.c_double
 )
 _RESOLVE_CALLBACK_TYPE = ctypes.CFUNCTYPE(
-    None, ctypes.c_int, ctypes.POINTER(ctypes.c_wchar_p)
+    None, ctypes.c_int, ctypes.POINTER(ctypes.c_wchar_p),
+    ctypes.POINTER(ctypes.c_wchar_p)
 )
 _VALUE_REQUEST_TYPE = ctypes.CFUNCTYPE(None)
-_FOLDER_RESOLVE_CALLBACK_TYPE = ctypes.CFUNCTYPE(None)
 _TEXTURE_SETTINGS_CALLBACK_TYPE = ctypes.CFUNCTYPE(None)
-_VIEW_CHANGED_CALLBACK_TYPE = ctypes.CFUNCTYPE(None)
-_ALIGN_TICK_CALLBACK_TYPE = ctypes.CFUNCTYPE(None)
 _value_callback_handle = None
 _resolve_callback_handle = None
 _value_request_handle = None
-_folder_resolve_handle = None
 _texture_settings_handle = None
-_view_changed_handle = None
-_align_tick_handle = None
 _NATIVE_CHANNELS = []  # [(ChannelType, label)]，顺序与按钮一致
 _LAST_FOLDER_PROBE_NAME = ""  # 已提示过“不支持接口”的文件夹名（防刷屏）
 
@@ -247,14 +242,14 @@ def _load_native():
         dll.sp_tools_set_resolve_callback.restype = None
         dll.sp_tools_set_value_request_callback.argtypes = [ctypes.c_void_p]
         dll.sp_tools_set_value_request_callback.restype = None
-        dll.sp_tools_set_folder_resolve_callback.argtypes = [ctypes.c_void_p]
-        dll.sp_tools_set_folder_resolve_callback.restype = None
         dll.sp_tools_set_texture_settings_callback.argtypes = [ctypes.c_void_p]
         dll.sp_tools_set_texture_settings_callback.restype = None
-        dll.sp_tools_set_view_changed_callback.argtypes = [ctypes.c_void_p]
-        dll.sp_tools_set_view_changed_callback.restype = None
-        dll.sp_tools_set_align_tick_callback.argtypes = [ctypes.c_void_p]
-        dll.sp_tools_set_align_tick_callback.restype = None
+        dll.sp_tools_set_align_config.argtypes = [
+            ctypes.c_int, ctypes.c_int,
+            ctypes.POINTER(ctypes.c_wchar_p),
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        ]
+        dll.sp_tools_set_align_config.restype = None
         dll.sp_tools_set_layer_tools_available.argtypes = [ctypes.c_int]
         dll.sp_tools_set_layer_tools_available.restype = None
         dll.sp_tools_set_folder_mode.argtypes = [ctypes.c_int]
@@ -278,11 +273,13 @@ def _load_native():
         dll.sp_tools_set_value.restype = None
         dll.sp_tools_reinject.argtypes = []
         dll.sp_tools_reinject.restype = None
+        dll.sp_tools_request_channels.argtypes = []
+        dll.sp_tools_request_channels.restype = None
         dll.sp_tools_shutdown.argtypes = []
         dll.sp_tools_shutdown.restype = None
         dll.sp_tools_install.argtypes = [ctypes.c_void_p]
         dll.sp_tools_install.restype = ctypes.c_int
-        if dll.sp_tools_api_version() != 5:
+        if dll.sp_tools_api_version() != 7:
             print(">>> sp_tools: 原生模块 API 版本不匹配")
             return None
         _native = dll
@@ -327,42 +324,30 @@ def _on_value_changed(index, mode_name, opacity):
         print(">>> sp_tools 应用图层参数失败:", exc)
 
 
-def _on_resolve_channels(count, texts):
-    """C++ 请求解析通道：直接按纹理集通道列表全量下发（不靠按钮文字）。"""
+def _on_resolve_channels(count, labels, keys):
+    """把 C++ 读取的原生下拉框顺序映射到 Painter 通道类型。"""
     if _PLUGIN_CLOSING or _SESSION_CLOSING:
         return
     try:
-        _push_channels_to_native()
+        native_labels = [labels[i] or "" for i in range(count)]
+        native_keys = [keys[i] or "" for i in range(count)]
+        pairs = _channel_pairs_in_ui_order(native_labels, native_keys)
+        _publish_native_channels(pairs or [(None, "文件夹")])
     except Exception as exc:
         print(">>> sp_tools 解析通道失败:", exc)
 
 
 def _push_channels_to_native():
-    """把当前纹理集全部通道按图层面板 channelSelector 顺序下发，行数=通道数。"""
-    pairs = _channel_pairs_in_ui_order()
-    if pairs:
-        _publish_native_channels(pairs)
-    else:
-        _publish_native_channels([(None, "文件夹")])
+    """请求 C++ 读取原生通道下拉框；回调会同步完成数据下发。"""
+    dll = _load_native()
+    if dll is not None:
+        dll.sp_tools_request_channels()
 
 
-def _find_channel_selector_combo():
-    """图层面板 channelSelector 下拉框（通道 UI 顺序的权威来源）。"""
-    dock = _layers_dock()
-    if not _safe(dock):
-        return None
-    for combo in dock.findChildren(QtWidgets.QComboBox):
-        if _safe(combo) and combo.objectName() == "channelSelector":
-            return combo
-    return None
-
-
-def _channel_pairs_in_ui_order():
-    """按 channelSelector 下拉框顺序返回 [(ChannelType, 下拉框文字)]，
-    通道名也直接复用 Painter 的显示文字，不自造。"""
-    combo = _find_channel_selector_combo()
+def _channel_pairs_in_ui_order(labels, keys):
+    """将 C++ 提供的 channelSelector 顺序关联到 Painter API 通道。"""
     allch = _build_channel_map()
-    if combo is None or not allch:
+    if not labels or not allch:
         return [(channel, _channel_display_name(channel))
                 for channel in _build_channel_list()]
     by_value = {}
@@ -383,23 +368,15 @@ def _channel_pairs_in_ui_order():
             pass
     ordered = []
     used = set()
-    for i in range(combo.count()):
+    for label, key in zip(labels, keys):
         resolved = None
+        key = str(key).strip()
         try:
-            data = combo.itemData(i)
-        except Exception:
-            data = None
-        if data is not None and not isinstance(data, (int, str)):
-            try:
-                data = int(data)
-            except Exception:
-                data = None
-        if data is not None:
-            if data in by_value:
-                resolved = by_value[data]
-            elif isinstance(data, str):
-                resolved = by_name.get(_normalize(data))
-        label = combo.itemText(i)
+            resolved = by_value.get(int(key))
+        except (TypeError, ValueError):
+            pass
+        if resolved is None and key:
+            resolved = by_name.get(_normalize(key))
         if resolved is not None and resolved not in used:
             ordered.append((resolved, label))
             used.add(resolved)
@@ -424,16 +401,6 @@ def _publish_native_channels(pairs):
            for channel, _label in _NATIVE_CHANNELS]
     labels = [label for _channel, label in _NATIVE_CHANNELS]
     dll.sp_tools_set_channels(len(ids), _wstr_array(ids), _wstr_array(labels))
-
-
-def _on_resolve_folder():
-    """C++ 进入文件夹模式时请求通道列表：与填充图层一样按通道显示。"""
-    if _PLUGIN_CLOSING or _SESSION_CLOSING:
-        return
-    try:
-        _push_channels_to_native()
-    except Exception as exc:
-        print(">>> sp_tools 解析文件夹通道失败:", exc)
 
 
 def _on_value_request():
@@ -594,31 +561,6 @@ def _channel_list_changed():
         return False
 
 
-_LAYERS_DOCK = None
-
-
-def _layers_dock():
-    """定位图层面板（缓存有效控件）。"""
-    global _LAYERS_DOCK
-    if _safe(_LAYERS_DOCK):
-        return _LAYERS_DOCK
-    app = QtWidgets.QApplication.instance()
-    if not _safe(app):
-        return None
-    for widget in app.allWidgets():
-        if not _safe(widget):
-            continue
-        if isinstance(widget, QtWidgets.QDockWidget):
-            try:
-                title = widget.windowTitle() or ""
-            except Exception:
-                continue
-            if "图层" in title or "layers" in _normalize(title):
-                _LAYERS_DOCK = widget
-                return widget
-    return None
-
-
 def _on_stack_changed(_event):
     """图层栈变化（切换/数值改动）：去抖后按需重建，并同步数值。"""
     if _PLUGIN_CLOSING or _SESSION_CLOSING:
@@ -685,20 +627,6 @@ def _on_texture_settings_refresh():
     _on_texture_set_settings_changed()
 
 
-def _on_view_changed():
-    """C++ 3D/2D 视图进出回调入口：触发校准同步。"""
-    if _PLUGIN_CLOSING or _SESSION_CLOSING:
-        return
-    _align_run_sync()
-
-
-def _on_align_tick():
-    """C++ 0.5s 校准定时器回调入口。"""
-    if _PLUGIN_CLOSING or _SESSION_CLOSING:
-        return
-    _align_run_sync()
-
-
 def _on_project_opened(_event):
     if _PLUGIN_CLOSING:
         return
@@ -744,188 +672,61 @@ TOOL_LOGIC_GROUPS = {
     "几何体填充": ["Geometry"],
     "材质选择器": ["materials_action"],
 }
-
-if not hasattr(QtCore, "_auto_align_cfg"):
-    QtCore._auto_align_cfg = {
-        "3A": 1, "3S": 0,
-        "2A": 3, "2S": 2,
-        "layer_tools_enabled": True,
-        "enabled": True,
-        "last_view": None,
-        "last_tool": None,
-        "active_groups": {
-            "绘画": True,
-            "橡皮": True,
-            "映射": False,
-            "几何体填充": False,
-            "涂抹": True,
-            "克隆": False,
-            "沿路径绘制": False,
-            "材质选择器": False,
-        },
-    }
+_ALIGN_GROUP_DEFAULTS = {
+    "绘画": True,
+    "橡皮": True,
+    "映射": False,
+    "几何体填充": False,
+    "涂抹": True,
+    "克隆": False,
+    "沿路径绘制": False,
+    "材质选择器": False,
+}
+_align_cfg = getattr(QtCore, "_auto_align_cfg", None)
+if not isinstance(_align_cfg, dict):
+    _align_cfg = {}
+for _key, _default in {
+        "3A": 1, "3S": 0, "2A": 3, "2S": 2,
+        "layer_tools_enabled": True, "enabled": True,
+}.items():
+    _align_cfg.setdefault(_key, _default)
+_active_groups = _align_cfg.setdefault("active_groups", {})
+if not isinstance(_active_groups, dict):
+    _active_groups = {}
+    _align_cfg["active_groups"] = _active_groups
+for _group, _enabled in _ALIGN_GROUP_DEFAULTS.items():
+    _active_groups.setdefault(_group, _enabled)
+# 旧版缓存已不参与 200ms 实际值核对，热重载时顺便清除。
+_align_cfg.pop("last_tool", None)
+_align_cfg.pop("last_view", None)
+QtCore._auto_align_cfg = _align_cfg
+del _key, _default, _group, _enabled, _active_groups, _align_cfg
+del _ALIGN_GROUP_DEFAULTS
 
 ALIGN_ITEMS = ["镜头", "切线|Wrap包裹", "切线|平面", "UV"]
 SPACE_ITEMS = ["物体", "视图", "纹理"]
 
-_align_sync_error_logged = False
-_align_tool_buttons = []
-_align_toolbars = []
 _align_ui = None
 _align_action = None
 _align_started = False
 
 
-def _align_get_current_tool_id():
-    """读取左侧工具栏当前选中的工具 ID（排除插件自身/系统按钮）。"""
-    main_win = sp.ui.get_main_window()
-    if not _safe(main_win):
-        return None
-    toolbar = main_win.findChild(QtWidgets.QToolBar, "Toolbar")
-    scope = toolbar if _safe(toolbar) else main_win
-    for button in scope.findChildren(QtWidgets.QToolButton):
-        if not _safe(button) or not button.isChecked():
-            continue
-        action = button.defaultAction()
-        if action is None:
-            continue
-        action_id = action.objectName()
-        if action_id and not action_id.startswith("qt_") and action_id != "enable":
-            return action_id
-    return None
-
-
-def _align_run_sync():
-    """同步入口（事件触发 + 500ms 兜底）：内部异常只记录一次，避免刷屏。"""
+def _push_align_config():
+    """把界面配置下发给 C++；识别、监听和校准均由原生模块完成。"""
     if _PLUGIN_CLOSING or _SESSION_CLOSING:
         return
-    global _align_sync_error_logged
-    try:
-        _align_do_sync()
-        _align_sync_error_logged = False
-    except Exception as exc:
-        if not _align_sync_error_logged:
-            _align_sync_error_logged = True
-            sp_logging.warning("映射校准助手同步异常: %s" % exc)
-
-
-def _align_invalidate_and_sync():
-    """配置变动后使缓存失效，并在事件循环空闲时应用当前预设。"""
-    cfg = QtCore._auto_align_cfg
-    cfg["last_tool"] = None
-    cfg["last_view"] = None
-    if not _PLUGIN_CLOSING and not _SESSION_CLOSING:
-        QtCore.QTimer.singleShot(0, _align_run_sync)
-
-
-def _align_do_sync():
-    if not sp.project.is_open():
+    dll = _load_native()
+    if dll is None:
         return
     cfg = QtCore._auto_align_cfg
-    if not cfg["enabled"]:
-        return
-    current_id = _align_get_current_tool_id()
-    matched_group = None
-    for group_name, id_list in TOOL_LOGIC_GROUPS.items():
-        if current_id in id_list:
-            matched_group = group_name
-            break
-    if not matched_group or not cfg["active_groups"].get(matched_group, False):
-        return
-
-    pos = QtGui.QCursor.pos()
-    widget = QtWidgets.QApplication.widgetAt(pos)
-    view_type = None
-    if _safe(widget):
-        current = widget
-        for _depth in range(8):
-            if not _safe(current):
-                break
-            name = current.objectName()
-            if name == "Viewer3D":
-                view_type = "3D"
-                break
-            if name == "TextureViewer":
-                view_type = "2D"
-                break
-            current = current.parentWidget()
-    if current_id == cfg["last_tool"] and view_type == cfg["last_view"]:
-        return
-    if view_type:
-        prefix = "3" if view_type == "3D" else "2"
-        target_a = cfg[prefix + "A"]
-        target_s = cfg[prefix + "S"]
-        main_win = sp.ui.get_main_window()
-        applied = False
-        if _safe(main_win):
-            tool_panel = main_win.findChild(QtWidgets.QWidget, "Tool")
-            if _safe(tool_panel):
-                for combo in tool_panel.findChildren(QtWidgets.QComboBox):
-                    if not _safe(combo) or not combo.isVisible():
-                        continue
-                    obj_name = combo.objectName().lower()
-                    if "alignment" in obj_name:
-                        applied = True
-                        if combo.currentIndex() != target_a:
-                            combo.setCurrentIndex(target_a)
-                            combo.activated.emit(target_a)
-                    if "size_space" in obj_name:
-                        applied = True
-                        if combo.currentIndex() != target_s:
-                            combo.setCurrentIndex(target_s)
-                            combo.activated.emit(target_s)
-                # 只有真正在可见面板上应用成功才记录状态，面板重开后会补上
-                if applied:
-                    cfg["last_tool"] = current_id
-                    cfg["last_view"] = view_type
-    else:
-        cfg["last_tool"] = current_id
-        cfg["last_view"] = view_type
-
-
-def _align_on_tool_toggled(_checked=False):
-    if _PLUGIN_CLOSING or _SESSION_CLOSING:
-        return
-    QtCore.QTimer.singleShot(0, _align_run_sync)
-
-
-def _align_install_tool_buttons():
-    """把工具栏工具按钮的 toggled 接到同步入口（幂等，可重复调用）。"""
-    global _align_tool_buttons, _align_toolbars
-    _align_toolbars = [toolbar for toolbar in _align_toolbars if _is_valid(toolbar)]
-    _align_tool_buttons = [btn for btn in _align_tool_buttons if _is_valid(btn)]
-    main_win = sp.ui.get_main_window()
-    if not _safe(main_win):
-        return
-    toolbar = main_win.findChild(QtWidgets.QToolBar, "Toolbar")
-    if _safe(toolbar) and toolbar not in _align_toolbars:
-        try:
-            toolbar.actionsChanged.connect(_align_on_toolbar_actions_changed)
-            _align_toolbars.append(toolbar)
-        except Exception:
-            pass
-    scope = toolbar if _safe(toolbar) else main_win
-    for button in scope.findChildren(QtWidgets.QToolButton):
-        if not _safe(button) or button in _align_tool_buttons:
-            continue
-        action = button.defaultAction()
-        if action is None:
-            continue
-        action_id = action.objectName()
-        if not action_id or action_id.startswith("qt_") or action_id == "enable":
-            continue
-        try:
-            button.toggled.connect(_align_on_tool_toggled)
-            _align_tool_buttons.append(button)
-        except RuntimeError:
-            pass
-
-
-def _align_on_toolbar_actions_changed():
-    """工具栏增删按钮后重新挂 toggled 连接（事件驱动，替代定时重挂）。"""
-    if _PLUGIN_CLOSING or _SESSION_CLOSING:
-        return
-    QtCore.QTimer.singleShot(0, _align_install_tool_buttons)
+    tool_ids = [tool_id for group, ids in TOOL_LOGIC_GROUPS.items()
+                if cfg["active_groups"].get(group, False) for tool_id in ids]
+    array_type = ctypes.c_wchar_p * len(tool_ids)
+    native_ids = array_type(*tool_ids) if tool_ids else None
+    dll.sp_tools_set_align_config(
+        1 if cfg["enabled"] else 0, len(tool_ids), native_ids,
+        cfg["3A"], cfg["3S"], cfg["2A"], cfg["2S"],
+    )
 
 
 def _apply_layer_tools_enabled():
@@ -1365,17 +1166,15 @@ class _AlignControl(QtWidgets.QDialog):
     def toggle_sync(self, checked):
         self.cfg["enabled"] = checked
         self.update_style(checked)
-        if checked:
-            _align_invalidate_and_sync()
+        _push_align_config()
 
     def _set_active_group(self, name, checked):
         self.cfg["active_groups"][name] = checked
-        if checked:
-            _align_invalidate_and_sync()
+        _push_align_config()
 
     def _set_preset(self, key, index):
         self.cfg[key] = index
-        _align_invalidate_and_sync()
+        _push_align_config()
 
     def _toggle_layer_tools(self, checked):
         self.cfg["layer_tools_enabled"] = checked
@@ -1399,20 +1198,16 @@ def _align_show_ui():
 
 
 def _align_start(main_window):
-    """启动映射校准助手：菜单入口、监听与首次同步。"""
+    """启动映射校准助手菜单并下发配置。"""
     global _align_action, _align_started
     if not _safe(main_window):
         return
     _align_remove_menu(main_window)
-    _align_install_tool_buttons()
     _align_action = main_window.menuBar().addAction("SP工具")
     _align_action.setObjectName("MappingHelperAction")
     _align_action.triggered.connect(_align_show_ui)
     _align_started = True
-    # 启动时不会天然产生“切换工具 / 进入视图”的事件；延后两轮事件循环
-    # 再同步一次，确保 Painter 的工具属性面板已经创建完成。
-    QtCore.QTimer.singleShot(0, _align_run_sync)
-    QtCore.QTimer.singleShot(250, _align_run_sync)
+    _push_align_config()
 
 
 def _align_remove_menu(main_window=None):
@@ -1437,26 +1232,10 @@ def _align_remove_menu(main_window=None):
 
 def _align_stop():
     """安全、彻底地销毁映射校准助手资源。"""
-    global _align_toolbars
-    global _align_ui, _align_tool_buttons, _align_action, _align_started
+    global _align_ui, _align_action, _align_started
     was_started = bool(
         _align_started or _align_action is not None or _align_ui is not None
-        or _align_tool_buttons or _align_toolbars
     )
-    for toolbar in _align_toolbars:
-        try:
-            if _is_valid(toolbar):
-                toolbar.actionsChanged.disconnect(_align_on_toolbar_actions_changed)
-        except (RuntimeError, TypeError):
-            pass
-    _align_toolbars = []
-    for button in _align_tool_buttons:
-        try:
-            if _is_valid(button):
-                button.toggled.disconnect(_align_on_tool_toggled)
-        except (RuntimeError, TypeError):
-            pass
-    _align_tool_buttons = []
     if _align_ui is not None:
         dialog = _align_ui
         _align_ui = None
@@ -1480,8 +1259,8 @@ def start_plugin():
     global _PLUGIN_CLOSING, _SESSION_CLOSING, _ABOUT_TO_QUIT_CONNECTED
     global _STACK_PENDING, _LAST_SELECTED_UID
     global _value_callback_handle, _resolve_callback_handle
-    global _value_request_handle, _folder_resolve_handle
-    global _texture_settings_handle, _view_changed_handle, _align_tick_handle
+    global _value_request_handle
+    global _texture_settings_handle
     app = QtWidgets.QApplication.instance()
     main_window = sp.ui.get_main_window()
     if not _safe(app) or not _safe(main_window):
@@ -1508,18 +1287,9 @@ def start_plugin():
             dll.sp_tools_set_resolve_callback(_resolve_callback_handle)
             _value_request_handle = _VALUE_REQUEST_TYPE(_on_value_request)
             dll.sp_tools_set_value_request_callback(_value_request_handle)
-            _folder_resolve_handle = _FOLDER_RESOLVE_CALLBACK_TYPE(
-                _on_resolve_folder)
-            dll.sp_tools_set_folder_resolve_callback(_folder_resolve_handle)
             _texture_settings_handle = _TEXTURE_SETTINGS_CALLBACK_TYPE(
                 _on_texture_settings_refresh)
             dll.sp_tools_set_texture_settings_callback(_texture_settings_handle)
-            _view_changed_handle = _VIEW_CHANGED_CALLBACK_TYPE(
-                _on_view_changed)
-            dll.sp_tools_set_view_changed_callback(_view_changed_handle)
-            _align_tick_handle = _ALIGN_TICK_CALLBACK_TYPE(_on_align_tick)
-            dll.sp_tools_set_align_tick_callback(_align_tick_handle)
-
             if _HAS_LAYERSTACK:
                 _sync_blend_modes_to_native()
             else:
@@ -1562,8 +1332,8 @@ def close_plugin():
     _early_teardown()
     global _ABOUT_TO_QUIT_CONNECTED
     global _value_callback_handle, _resolve_callback_handle
-    global _value_request_handle, _folder_resolve_handle
-    global _texture_settings_handle, _view_changed_handle, _align_tick_handle
+    global _value_request_handle
+    global _texture_settings_handle
     app = QtWidgets.QApplication.instance()
     if _safe(app) and _ABOUT_TO_QUIT_CONNECTED:
         try:
@@ -1596,7 +1366,4 @@ def close_plugin():
     _value_callback_handle = None
     _resolve_callback_handle = None
     _value_request_handle = None
-    _folder_resolve_handle = None
     _texture_settings_handle = None
-    _view_changed_handle = None
-    _align_tick_handle = None
